@@ -17,4 +17,4 @@
 
 // This file is used to config the websockets url without the
 // need to rebuild the extension
-// window.socketUrl = 'ws://localhost:3000'
+// globalThis.socketUrl = 'ws://localhost:3000'

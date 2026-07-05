@@ -1,6 +1,6 @@
 {
   "description": "Testmate Recorder",
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "Testmate Recorder",
   "version": "1.0.0",
   "homepage_url": "https://example.com/testmate",
@@ -10,7 +10,7 @@
     "64": "icons/icon64.png",
     "128": "icons/icon128.png"
   },
-  "browser_action": {
+  "action": {
     "default_icon": {
       "16": "icons/icon_menu16.png",
       "32": "icons/icon_menu32.png",
@@ -24,14 +24,26 @@
     "browsingData",
     "webRequest",
     "webNavigation",
+    "storage"
+  ],
+  "host_permissions": [
     "<all_urls>"
   ],
   "web_accessible_resources": [
-    "icons/icon128.png",
-    "assets/prompt.js",
-    "assets/highlight.css"
+    {
+      "resources": [
+        "icons/icon128.png",
+        "assets/prompt.js",
+        "assets/highlight.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
   ],
-  "content_security_policy": "script-src 'self' 'sha256-W7QWmGne6B9hjKtOqoGmUFOPgpFcUo4Nr/yyMqtgXcU=' 'sha256-4cgtnhJWZr038A2+gTGcUgQL2QsJao6c0AiTxYYo6c8=' 'unsafe-eval'; object-src 'self'",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -45,9 +57,7 @@
     }
   ],
   "background": {
-    "scripts": [
-      "assets/config.js",
-      "assets/background.js"
-    ]
+    "service_worker": "assets/background.js",
+    "scripts": ["assets/background.js"]
   }
 }
