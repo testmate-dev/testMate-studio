@@ -24,7 +24,7 @@ const isProduction = process.env.NODE_ENV === 'production'
 
 module.exports = {
   context: path.resolve(__dirname, 'src'),
-  devtool: isProduction ? 'source-map' : 'eval',
+  devtool: isProduction ? 'source-map' : 'cheap-module-source-map',
   mode: isProduction ? 'production' : 'development',
   entry: {
     background: ['./background'],
@@ -40,7 +40,7 @@ module.exports = {
   resolve: {
     extensions: ['.js', '.json', '.vue'],
     alias: {
-      vue$: 'vue/dist/vue.esm-bundler.js',
+      vue$: 'vue/dist/vue.runtime.esm-bundler.js',
     },
   },
   module: {

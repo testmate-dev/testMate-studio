@@ -21,8 +21,11 @@ import BackgroundRecorder from './recorder'
 import WindowSession from './window-session'
 import { select, cancelSelect } from './select'
 
+const STORAGE_KEY = 'tmr:recorderState'
+
+let socket = null
+let socketListenersReady = false
 const windowSession = new WindowSession()
-const socket = eio(window.socketUrl || 'ws://localhost:4445')
 const recordedSteps = []
 let activeSessionId = null
 let isRecording = false
@@ -31,6 +34,100 @@ let uiWindowId = null
 const MIN_UI_WINDOW_WIDTH = 560
 const MIN_UI_WINDOW_HEIGHT = 640
 let isUpdatingUiWindowBounds = false
+
+function getSocket() {
+  if (!socket) {
+    socket = eio(globalThis.socketUrl || 'ws://localhost:4445')
+  }
+  if (!socketListenersReady) {
+    socketListenersReady = true
+    socket.on('open', () => {
+      socket.on('message', data => {
+        const { type, payload } = JSON.parse(data)
+        if (type === 'attach') {
+          attach(payload)
+        } else if (type === 'detach') {
+          detach()
+        } else if (type === 'select') {
+          selectElement(payload.sessionId, payload.windowName)
+            .then(result => {
+              return socket.send(
+                JSON.stringify({
+                  type: 'select',
+                  payload: {
+                    result,
+                  },
+                })
+              )
+            })
+            .catch(error => {
+              return socket.send(
+                JSON.stringify({
+                  type: 'select',
+                  payload: {
+                    error: true,
+                    message: error.message,
+                  },
+                })
+              )
+            })
+        } else if (type === 'cancelSelect') {
+          cancelSelect()
+        }
+      })
+    })
+  }
+  return socket
+}
+
+// === State Persistence ===
+
+async function persistState() {
+  try {
+    await browser.storage.local.set({
+      [STORAGE_KEY]: {
+        recordedSteps: recordedSteps.slice(),
+        activeSessionId,
+        isPaused,
+        isRecording,
+        uiWindowId,
+      },
+    })
+  } catch (e) {
+    // best-effort
+  }
+}
+
+async function clearSavedState() {
+  try {
+    await browser.storage.local.remove(STORAGE_KEY)
+  } catch (e) {
+    // best-effort
+  }
+}
+
+async function restoreState() {
+  try {
+    const result = await browser.storage.local.get(STORAGE_KEY)
+    const saved = result[STORAGE_KEY]
+    if (!saved || !Array.isArray(saved.recordedSteps)) return
+
+    recordedSteps.length = 0
+    saved.recordedSteps.forEach(step => recordedSteps.push(step))
+    activeSessionId = saved.activeSessionId || null
+    isPaused = saved.isPaused || false
+    isRecording = saved.isRecording || false
+    uiWindowId = saved.uiWindowId || null
+
+    await clearSavedState()
+    notifyUiUpdate('restore')
+  } catch (e) {
+    // best-effort
+  }
+}
+
+// Restore any previously saved state on startup
+restoreState()
 
 const notifyUiUpdate = reason => {
   browser.runtime
@@ -43,7 +140,7 @@ const notifyUiUpdate = reason => {
 
 const record = (command, target, value, insertBeforeLastCommand) => {
   if (isPaused) return
-  window.hasRecorded = true
+  globalThis.hasRecorded = true
   const payload = {
     type: 'record',
     payload: {
@@ -55,8 +152,8 @@ const record = (command, target, value, insertBeforeLastCommand) => {
   }
   recordedSteps.push(payload.payload)
   notifyUiUpdate('record')
-  if (socket && socket.readyState === 'open') {
-    return socket.send(JSON.stringify(payload))
+  if (getSocket() && getSocket().readyState === 'open') {
+    return getSocket().send(JSON.stringify(payload))
   }
 }
 
@@ -67,27 +164,27 @@ const recordOpensWindow = windowHandleName => {
       windowHandleName,
     },
   }
-  if (socket && socket.readyState === 'open') {
-    return socket.send(JSON.stringify(payload))
+  if (getSocket() && getSocket().readyState === 'open') {
+    return getSocket().send(JSON.stringify(payload))
   }
 }
 
-const hasRecorded = () => window.hasRecorded
+const hasRecorded = () => globalThis.hasRecorded
 
-window.recorder = new BackgroundRecorder(
+globalThis.recorder = new BackgroundRecorder(
   windowSession,
   record,
   recordOpensWindow,
   hasRecorded
 )
 
-const attach = ({ sessionId, hasRecorded = false }) => {
-  window.hasRecorded = hasRecorded
+const attach = ({ sessionId, hasRecorded: hasRecordedFlag = false }) => {
+  globalThis.hasRecorded = hasRecordedFlag
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
   notifyUiUpdate('attach')
-  return window.recorder.attach(sessionId)
+  return globalThis.recorder.attach(sessionId)
 }
 
 const detach = () => {
@@ -95,7 +192,7 @@ const detach = () => {
   isPaused = false
   activeSessionId = null
   notifyUiUpdate('detach')
-  return window.recorder.detach()
+  return globalThis.recorder.detach()
 }
 
 const normalizeUrl = rawUrl => {
@@ -279,11 +376,11 @@ const startRecording = async (url, sessionIdOverride, options = {}) => {
     }
   }
 
-  window.hasRecorded = false
+  globalThis.hasRecorded = false
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
-  await window.recorder.attachWithTab(sessionId, tab)
+  await globalThis.recorder.attachWithTab(sessionId, tab)
   record('open', [[startUrl]], '')
   return { ok: true, sessionId }
 }
@@ -293,6 +390,7 @@ const pauseRecording = () => {
     return { ok: false, error: 'Cannot pause when recording is not active.' }
   }
   isPaused = true
+  persistState()
   notifyUiUpdate('pause')
   return { ok: true, isPaused }
 }
@@ -302,6 +400,7 @@ const resumeRecording = () => {
     return { ok: false, error: 'Cannot resume when recording is not active.' }
   }
   isPaused = false
+  clearSavedState()
   notifyUiUpdate('resume')
   return { ok: true, isPaused }
 }
@@ -321,6 +420,7 @@ const steps = () => ({
 
 const clear = () => {
   recordedSteps.length = 0
+  clearSavedState()
   notifyUiUpdate('clear')
   return { ok: true }
 }
@@ -339,6 +439,7 @@ const replaceSteps = nextSteps => {
       insertBeforeLastCommand: step.insertBeforeLastCommand,
     })
   })
+  persistState()
   notifyUiUpdate('replaceSteps')
   return {
     ok: true,
@@ -406,7 +507,7 @@ if (browser.windows.onRemoved && typeof browser.windows.onRemoved.addListener ==
   })
 }
 
-browser.browserAction.onClicked.addListener(() => {
+browser.action.onClicked.addListener(() => {
   openUiWindow()
 })
 
@@ -423,42 +524,6 @@ const selectElement = async (sessionId, windowName) => {
 
   return await select(parseInt(tab))
 }
-
-socket.on('open', () => {
-  socket.on('message', data => {
-    const { type, payload } = JSON.parse(data)
-    if (type === 'attach') {
-      attach(payload)
-    } else if (type === 'detach') {
-      detach()
-    } else if (type === 'select') {
-      selectElement(payload.sessionId, payload.windowName)
-        .then(result => {
-          return socket.send(
-            JSON.stringify({
-              type: 'select',
-              payload: {
-                result,
-              },
-            })
-          )
-        })
-        .catch(error => {
-          return socket.send(
-            JSON.stringify({
-              type: 'select',
-              payload: {
-                error: true,
-                message: error.message,
-              },
-            })
-          )
-        })
-    } else if (type === 'cancelSelect') {
-      cancelSelect()
-    }
-  })
-})
 
 browser.runtime.onMessage.addListener(message => {
   if (!message || !message.tmrRecorder) return
@@ -499,7 +564,7 @@ browser.runtime.onMessage.addListener(message => {
   }
 })
 
-window.tmrApi = {
+globalThis.tmrApi = {
   start: startRecording,
   stop: () => detach().then(() => ({ ok: true })),
   pause: pauseRecording,
