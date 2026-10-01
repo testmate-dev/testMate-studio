@@ -4544,19 +4544,19 @@ tmpl@1.0.5:
   resolved "https://registry.npmjs.org/tmpl/-/tmpl-1.0.5.tgz"
   integrity sha512-3f0uOEAQwIqGuWW2MVzYg8fV/QNnc/IpuJNG837rLuczAaLVHslWHZQj4IGiEl5Hs3kkbhwL9Ab7Hrsmuj+Smw==
 
-tmr-commons@^3.5.10, "tmr-commons@file:/home/rodude123/testMate/testMate-recorder/packages/tmr-commons":
+tms-commons@^3.5.10, "tms-commons@file:/home/rodude123/testMate/testMate-recorder/packages/tms-commons":
   version "3.5.10"
-  resolved "file:packages/tmr-commons"
+  resolved "file:packages/tms-commons"
 
-"tmr-postprocessor@file:../tmr-postprocessor", "tmr-postprocessor@file:/home/rodude123/testMate/testMate-recorder/packages/tmr-postprocessor":
+"tms-postprocessor@file:../tms-postprocessor", "tms-postprocessor@file:/home/rodude123/testMate/testMate-recorder/packages/tms-postprocessor":
   version "3.5.10"
-  resolved "file:packages/tmr-postprocessor"
+  resolved "file:packages/tms-postprocessor"
   dependencies:
-    tmr-commons "^3.5.10"
+    tms-commons "^3.5.10"
 
-"tmr-recorder@file:/home/rodude123/testMate/testMate-recorder/packages/tmr-recorder":
+"tms-studio@file:/home/rodude123/testMate/testMate-recorder/packages/tms-studio":
   version "3.5.10"
-  resolved "file:packages/tmr-recorder"
+  resolved "file:packages/tms-studio"
   dependencies:
     "@medv/finder" "^1.1.1"
     "@vue/compiler-sfc" "^3.5.34"

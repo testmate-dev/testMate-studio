@@ -1,4 +1,4 @@
-# AGENTS.md - Development Guide for TestMate Recorder
+# AGENTS.md - Development Guide for TestMate Studio
 
 ## Build Commands
 
@@ -11,21 +11,21 @@ yarn workspaces foreach -p run build  # Build all workspaces
 ### Building Individual Packages
 ```bash
 # Babel-based packages (most packages)
-yarn workspace tmr-commons build
-yarn workspace tmr-postprocessor build
+yarn workspace tms-commons build
+yarn workspace tms-postprocessor build
 
 # Webpack-based package (browser extension)
-cd packages/tmr-recorder && yarn build
+cd packages/tms-studio && yarn build
 
 # TypeScript package (includes type checking)
-cd packages/tmr-model && yarn build
+cd packages/tms-model && yarn build
 ```
 
 ### Watching for Changes
 ```bash
 yarn watch                    # Watch root packages
-yarn workspace tmr-commons watch
-cd packages/tmr-recorder && yarn watch
+yarn workspace tms-commons watch
+cd packages/tms-studio && yarn watch
 ```
 
 ## Test Commands
@@ -36,7 +36,7 @@ cd packages/tmr-recorder && yarn watch
 yarn test
 
 # Run a single test file
-yarn jest packages/tmr-postprocessor/__tests__/index.spec.js --no-coverage
+yarn jest packages/tms-postprocessor/__tests__/index.spec.js --no-coverage
 
 # Run tests matching a pattern
 yarn jest --testPathPattern="recorder"
@@ -47,8 +47,8 @@ yarn jest -u
 
 ### Note on Test Setup
 - Tests use Jest with Babel transpilation
-- Some packages require building dependencies first (tmr-commons, tmr-model)
-- Run `yarn workspace tmr-commons build` before testing packages that depend on it
+- Some packages require building dependencies first (tms-commons, tms-model)
+- Run `yarn workspace tms-commons build` before testing packages that depend on it
 
 ## Code Style Guidelines
 
@@ -122,13 +122,13 @@ export default class Recorder {
 - Use `describe` and `it` blocks
 - Update snapshots with `yarn jest -u` when changes are intentional
 
-### TypeScript (tmr-model only)
+### TypeScript (tms-model only)
 - Strict mode enabled in tsconfig.json
-- Type checking: `cd packages/tmr-model && yarn build` (runs tsc)
+- Type checking: `cd packages/tms-model && yarn build` (runs tsc)
 - Use proper typing in function signatures
-- Follow existing patterns in `packages/tmr-model/src/`
+- Follow existing patterns in `packages/tms-model/src/`
 
-### Browser Extension (tmr-recorder)
+### Browser Extension (tms-studio)
 - Use `webextension-polyfill` for cross-browser compatibility
 - Content scripts, background scripts, and UI components in `src/content/`, `src/background/`, `src/ui/`
 
@@ -136,16 +136,16 @@ export default class Recorder {
 
 ```
 packages/
-├── tmr-commons/     # Shared utilities and events
-├── tmr-postprocessor/  # Recording postprocessing
-├── tmr-recorder/    # WebExtension recorder (webpack)
-├── tmr-model/       # Data models (TypeScript)
-├── tmr-runtime/     # Playback and execution
-├── tmr-migrate/     # Format migrations
-├── tmr-cli/         # Command-line interface
-├── tmr-ide/         # IDE integration
-├── tmr-testkit/     # Testing utilities
-└── tmr-webdriver-testkit/  # WebDriver testing
+├── tms-commons/     # Shared utilities and events
+├── tms-postprocessor/  # Recording postprocessing
+├── tms-studio/    # WebExtension recorder (webpack)
+├── tms-model/       # Data models (TypeScript)
+├── tms-runtime/     # Playback and execution
+├── tms-migrate/     # Format migrations
+├── tms-cli/         # Command-line interface
+├── tms-ide/         # IDE integration
+├── tms-testkit/     # Testing utilities
+└── tms-webdriver-testkit/  # WebDriver testing
 ```
 
 ## Common Tasks
@@ -158,6 +158,6 @@ packages/
 
 ### Running the extension
 ```bash
-cd packages/tmr-recorder && yarn build
+cd packages/tms-studio && yarn build
 # Load the dist/ folder as unpacked extension in browser
 ```
