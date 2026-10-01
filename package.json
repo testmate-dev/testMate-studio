@@ -1,11 +1,14 @@
 {
-  "name": "testmate-recorder",
+  "name": "testmate-studio",
   "private": true,
   "workspaces": [
-    "packages/tmr-recorder",
-    "packages/tmr-postprocessor",
-    "packages/tmr-commons"
+    "packages/tms-studio",
+    "packages/tms-postprocessor",
+    "packages/tms-commons"
   ],
+  "scripts": {
+    "start": "npm run watch -w tms-studio"
+  },
   "devDependencies": {
     "@babel/cli": "^7.24.0",
     "@babel/core": "^7.24.0",

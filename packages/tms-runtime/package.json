@@ -1,0 +1,38 @@
+{
+  "name": "tms-runtime",
+  "version": "3.5.10",
+  "private": true,
+  "description": "Testmate playback and execution",
+  "author": "Testmate",
+  "homepage": "https://example.com/testmate",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "babel --root-mode upward -d dist src --extensions \".js,.jsx,.ts,.tsx\" --source-maps true",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "yarn clean && yarn build",
+    "watch": "yarn build -w"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://example.com/testmate.git"
+  },
+  "bugs": {
+    "url": "https://example.com/testmate/issues"
+  },
+  "devDependencies": {
+    "tms-model": "^3.5.10",
+    "tms-testkit": "^3.5.10",
+    "tms-webdriver-testkit": "^3.5.10",
+    "selenium-webdriver": "^4.0.0-alpha.7"
+  },
+  "dependencies": {
+    "tms-commons": "^3.5.10"
+  },
+  "peerDependencies": {
+    "selenium-webdriver": "^4.0.0-alpha.7"
+  }
+}

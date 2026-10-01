@@ -1,0 +1,29 @@
+{
+  "name": "tms-testkit",
+  "version": "3.5.10",
+  "private": true,
+  "description": "Testmate test stuff",
+  "author": "Testmate",
+  "homepage": "https://example.com/testmate",
+  "license": "Apache-2.0",
+  "scripts": {
+    "build": "babel --root-mode upward -d dist src --extensions \".js,.jsx,.ts,.tsx\" --source-maps true",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "yarn clean && yarn build",
+    "watch": "yarn build -w"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://example.com/testmate.git"
+  },
+  "bugs": {
+    "url": "https://example.com/testmate/issues"
+  },
+  "dependencies": {
+    "express": "^4.16.4"
+  }
+}
