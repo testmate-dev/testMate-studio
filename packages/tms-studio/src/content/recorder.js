@@ -26,6 +26,7 @@ export default class Recorder {
   constructor(window) {
     this.window = window
     this.eventListeners = {}
+    this.mutationObservers = {}
     this.attached = false
     this.recordingState = {}
     this.frameLocation = ''
@@ -165,17 +166,17 @@ export default class Recorder {
         const handlers = Recorder.eventHandlers[eventKey]
         this.eventListeners[eventKey] = []
         for (let i = 0; i < handlers.length; i++) {
-          this.window.document.addEventListener(
-            eventName,
-            handlers[i].bind(this),
-            capture
-          )
-          this.eventListeners[eventKey].push(handlers[i])
+          // Keep the bound listener so detach() can remove the same reference
+          const listener = handlers[i].bind(this)
+          this.window.document.addEventListener(eventName, listener, capture)
+          this.eventListeners[eventKey].push(listener)
         }
       }
       for (let observerName in Recorder.mutationObservers) {
-        const observer = Recorder.mutationObservers[observerName]
-        observer.observe(this.window.document.body, observer.config)
+        const { callback, config } = Recorder.mutationObservers[observerName]
+        const observer = new MutationObserver(callback.bind(this))
+        observer.observe(this.window.document.body, config)
+        this.mutationObservers[observerName] = observer
       }
       this.attached = true
       this.recordingState = {
@@ -209,10 +210,10 @@ export default class Recorder {
         )
       }
     }
-    for (let observerName in Recorder.mutationObservers) {
-      const observer = Recorder.mutationObservers[observerName]
-      observer.disconnect()
+    for (let observerName in this.mutationObservers) {
+      this.mutationObservers[observerName].disconnect()
     }
+    this.mutationObservers = {}
     this.eventListeners = {}
     this.attached = false
     detachInputListeners(this.recordingState, this.window)
@@ -280,13 +281,14 @@ Recorder.addEventHandler = function(handlerName, eventName, handler, options) {
 
 /**
  * @param {string} observerName
- * @param {MutationCallback} callback
+ * @param {MutationCallback} callback invoked with the Recorder instance as `this`
+ * @param {MutationObserverInit} config
  */
 Recorder.addMutationObserver = function(observerName, callback, config) {
-  const observer = new MutationObserver(callback)
-  observer.observerName = observerName
-  observer.config = config
-  this.mutationObservers[observerName] = observer
+  // Observers are created per instance in attach() so the callback can be
+  // bound to the recorder; a static MutationObserver would bind `this` to
+  // the observer and break `this.record`.
+  this.mutationObservers[observerName] = { callback, config }
 }
 
 Recorder.inputTypes = [

@@ -16,6 +16,7 @@
 // under the License.
 
 const path = require('path')
+const { DefinePlugin } = require('webpack')
 //const ExtractTextPlugin = require('extract-text-webpack-plugin')
 const CopyWebpackPlugin = require('copy-webpack-plugin')
 const { VueLoaderPlugin } = require('vue-loader')
@@ -86,6 +87,12 @@ module.exports = {
   },
   plugins: [].concat([
     new VueLoaderPlugin(),
+    // Vue esm-bundler compile-time feature flags
+    new DefinePlugin({
+      __VUE_OPTIONS_API__: JSON.stringify(true),
+      __VUE_PROD_DEVTOOLS__: JSON.stringify(false),
+      __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: JSON.stringify(false),
+    }),
     // Copy non-umd assets to vendor
     new CopyWebpackPlugin({
       patterns: [
