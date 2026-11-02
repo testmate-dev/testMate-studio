@@ -127,8 +127,11 @@ button:disabled {
 
 .bulk-icon-btn svg,
 .step-delete svg,
+.step-edit svg,
 .step-handle svg,
-.paste-insert svg {
+.paste-insert svg,
+.function-toggle svg,
+.function-param-remove svg {
   width: 13px;
   height: 13px;
   pointer-events: none;
@@ -162,6 +165,33 @@ button:disabled {
   box-shadow: 0 0 0 2px hsla(167, 62%, 82%, 0.9);
 }
 
+.bulk-function-wrap {
+  display: inline-flex;
+}
+
+.bulk-function-wrap[hidden] {
+  display: none;
+}
+
+.bulk-icon-btn.bulk-function {
+  width: auto;
+  padding: 0 8px;
+  color: var(--color-function);
+  border-color: var(--border-color-function);
+  background: var(--bg-color-function-soft);
+}
+
+/* Let the wrapper receive hover so its tooltip shows in every browser */
+.bulk-icon-btn.bulk-function:disabled {
+  pointer-events: none;
+}
+
+.fx-label {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-style: italic;
+  font-size: 14px;
+}
+
 .bulk-icon-btn.bulk-close {
   margin-left: auto;
   color: #6b6257;
@@ -179,22 +209,85 @@ button:disabled {
   font-size: 12px;
 }
 
+.step-item {
+  position: relative;
+}
+
 .step {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  position: relative;
   padding: 7px 6px;
   border-bottom: 1px dashed #eee6dc;
 }
 
-.step.selected {
+.step-item.selected {
   background: #f4efe5;
 }
 
-.step.dragging {
+.step-item.dragging {
   opacity: 0.72;
   background: #f1ece2;
+}
+
+.function-block {
+  border-left: 3px solid var(--border-color-function);
+}
+
+.function-header {
+  align-items: center;
+  background: var(--bg-color-function-soft);
+}
+
+.step-item.selected .function-header {
+  background: transparent;
+}
+
+.function-toggle {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-function);
+}
+
+.function-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-function);
+  font-weight: 600;
+}
+
+.function-signature {
+  cursor: text;
+}
+
+.function-count {
+  font-weight: 400;
+  font-size: 11px;
+  color: #777;
+}
+
+.function-rename-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color-function);
+}
+
+.function-rename-input.invalid {
+  border-color: var(--color-stop);
+  outline-color: var(--color-stop);
+}
+
+/* Indent past the checkbox and toggle so children read as nested */
+.function-child {
+  padding-left: 64px;
+  color: #444;
 }
 
 .step-select {
@@ -225,6 +318,7 @@ button:disabled {
 }
 
 .step-delete,
+.step-edit,
 .step-handle {
   width: 26px;
   height: 24px;
@@ -259,7 +353,7 @@ button:disabled {
   bottom: -10px;
 }
 
-.step.paste-target:hover .paste-insert {
+.step-item.paste-target:hover .paste-insert {
   opacity: 1;
   pointer-events: auto;
 }
@@ -323,6 +417,22 @@ button:disabled {
   border: 1px solid #d6d2cc;
 }
 
+.modal-input {
+  background-color: #fff;
+  color: #1f1f1f;
+}
+
+/* Replace the native select styling (grey in Chromium) with our own arrow
+   so the dropdown matches the text inputs in every browser */
+select.modal-input {
+  appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23555' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+}
+
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -337,4 +447,68 @@ button:disabled {
   margin-top: 10px;
   font-size: 12px;
   color: #444;
+}
+
+.function-modal {
+  width: 460px;
+  max-width: calc(100vw - 28px);
+}
+
+.function-params-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.function-params-header .modal-label {
+  margin-bottom: 0;
+}
+
+.function-param-add {
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 8px;
+  color: var(--color-function);
+  border-color: var(--border-color-function);
+  background: var(--bg-color-function-soft);
+}
+
+.function-params-empty {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #777;
+  font-style: italic;
+}
+
+.function-param {
+  display: grid;
+  grid-template-columns: 1fr 1fr 30px;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.function-param-columns {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #555;
+}
+
+.function-param-columns + .function-param {
+  margin-top: 4px;
+}
+
+.function-param-remove {
+  width: 30px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.function-errors {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--color-stop);
 }

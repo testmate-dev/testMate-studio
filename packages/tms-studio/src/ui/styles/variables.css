@@ -17,4 +17,7 @@
   --bg-color-copy-hover: hsla(41, 100%, 93%, 1);
   --bg-color-cut-soft: hsla(284, 40%, 97%, 1);
   --bg-color-cut-hover: hsla(284, 50%, 93%, 1);
+  --color-function: hsla(212, 48%, 38%, 1);
+  --border-color-function: hsla(212, 40%, 74%, 1);
+  --bg-color-function-soft: hsla(212, 60%, 97%, 1);
 }

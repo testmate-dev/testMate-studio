@@ -13,12 +13,15 @@
   <BulkActions
     :show-bulk-bar="showBulkBar"
     :has-selected-steps="hasSelectedSteps"
+    :can-create-function="!createFunctionBlocker"
+    :create-function-title="createFunctionBlocker || 'Create function from selected'"
     :copied-steps-count="copiedSteps.length"
     :is-paste-mode="isPasteMode"
     :icons="icons"
     @delete-selected="deleteSelectedSteps"
     @copy-selected="copySelectedSteps"
     @cut-selected="cutSelectedSteps"
+    @create-function="openCreateFunctionModal"
     @paste-click="onPasteClick"
     @hide="hideBulkActions"
   />
@@ -35,6 +38,9 @@
     @delete-step="removeStepById"
     @drag-start="startDrag"
     @paste-insert="insertCopiedSteps"
+    @toggle-collapse="toggleFunctionCollapsed"
+    @edit-function="openEditFunctionModal"
+    @rename-function="renameFunction"
   />
 
   <div class="hint">Recording opens in a new browser window.</div>
@@ -49,19 +55,40 @@
     @update:start-url="startUrl = $event"
     @update:clear-site-data="clearSiteData = $event"
   />
+
+  <FunctionModal
+    :show="functionModal.show"
+    :mode="functionModal.mode"
+    :initial-name="functionModal.name"
+    :initial-parameters="functionModal.parameters"
+    :icons="icons"
+    @cancel="closeFunctionModal"
+    @save="saveFunctionModal"
+  />
 </template>
 
 <script>
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { icon } from '@fortawesome/fontawesome-svg-core'
 import { faTrashCan, faCopy } from '@fortawesome/free-regular-svg-icons'
-import { faGripLines, faPaste, faPlus, faScissors, faXmark } from '@fortawesome/free-solid-svg-icons'
+import {
+  faCaretDown,
+  faCaretRight,
+  faGripLines,
+  faPaste,
+  faPenToSquare,
+  faPlus,
+  faScissors,
+  faXmark,
+} from '@fortawesome/free-solid-svg-icons'
 import { useRecorderApi } from './composables/useRecorderApi'
+import { createFunctionId, isFunctionItem } from './utils/function-utils'
 import RecorderHeader from './components/RecorderHeader.vue'
 import RecorderControls from './components/RecorderControls.vue'
 import BulkActions from './components/BulkActions.vue'
 import StepList from './components/StepList.vue'
 import StartModal from './components/StartModal.vue'
+import FunctionModal from './components/FunctionModal.vue'
 
 export default {
   components: {
@@ -70,6 +97,7 @@ export default {
     BulkActions,
     StepList,
     StartModal,
+    FunctionModal,
   },
   setup() {
     const { callBg, onUpdated } = useRecorderApi()
@@ -88,6 +116,14 @@ export default {
     const draggingStepId = ref(null)
     const dragStartOrder = ref('')
     const isDragging = ref(false)
+    const functionModal = reactive({
+      show: false,
+      mode: 'create',
+      functionId: null,
+      name: '',
+      parameters: [],
+    })
+    let selectionAnchorId = null
     let pendingClientY = null
     let moveRafId = null
     let removeUpdateListener = null
@@ -100,6 +136,9 @@ export default {
       scissors: icon(faScissors).html.join(''),
       grip: icon(faGripLines).html.join(''),
       close: icon(faXmark).html.join(''),
+      pen: icon(faPenToSquare).html.join(''),
+      caretDown: icon(faCaretDown).html.join(''),
+      caretRight: icon(faCaretRight).html.join(''),
     }
 
     const statusText = computed(() => {
@@ -126,38 +165,67 @@ export default {
         step.insertBeforeLastCommand,
       ])
 
-    const assignUiIds = steps => {
+    // Function children are not selectable or movable on their own, so their
+    // UI IDs only need to be unique within the function.
+    const withChildUiIds = fn => ({
+      ...fn,
+      steps: fn.steps.map((step, index) => ({ ...step, _uiId: `${fn.id}-${index}` })),
+    })
+
+    const assignUiIds = items => {
       const reusableIds = new Map()
-      uiSteps.value.forEach(step => {
-        const key = stepKey(step)
+      uiSteps.value.forEach(item => {
+        if (isFunctionItem(item)) return
+        const key = stepKey(item)
         const existing = reusableIds.get(key) || []
-        existing.push(step._uiId)
+        existing.push(item._uiId)
         reusableIds.set(key, existing)
       })
-      return steps.map(step => {
-        const key = stepKey(step)
+      return items.map(item => {
+        if (isFunctionItem(item)) return { ...withChildUiIds(item), _uiId: item.id }
+        const key = stepKey(item)
         const existing = reusableIds.get(key) || []
         const uiId = existing.length > 0 ? existing.shift() : `step-${stepIdCounter.value++}`
         reusableIds.set(key, existing)
-        return { ...step, _uiId: uiId }
+        return { ...item, _uiId: uiId }
       })
     }
 
-    const stepText = (step, index) => {
+    const stepText = (step, label) => {
       const target = Array.isArray(step.target)
         ? step.target.map(t => t[0]).join(' | ')
         : step.target
       const value = step.value ? ` = ${step.value}` : ''
-      return `${index + 1}. ${step.command} ${target || ''}${value}`.trim()
+      return `${label}. ${step.command} ${target || ''}${value}`.trim()
     }
 
-    const serializeSteps = () =>
-      uiSteps.value.map(step => ({
-        command: step.command,
-        target: step.target,
-        value: step.value,
-        insertBeforeLastCommand: step.insertBeforeLastCommand,
-      }))
+    const serializeStep = step => ({
+      command: step.command,
+      target: step.target,
+      value: step.value,
+      insertBeforeLastCommand: step.insertBeforeLastCommand,
+    })
+
+    const serializeItem = item => {
+      if (!isFunctionItem(item)) return serializeStep(item)
+      return {
+        type: 'function',
+        id: item.id,
+        name: item.name,
+        parameters: item.parameters.map(parameter => ({ ...parameter })),
+        collapsed: !!item.collapsed,
+        steps: item.steps.map(serializeStep),
+      }
+    }
+
+    // Gives a copied item fresh IDs so pasting it twice yields distinct items
+    const instantiateItem = item => {
+      if (!isFunctionItem(item)) return { ...item, _uiId: `step-${stepIdCounter.value++}` }
+      const id = createFunctionId()
+      return { ...withChildUiIds({ ...serializeItem(item), id }), _uiId: id }
+    }
+
+    const serializeSteps = () => uiSteps.value.map(serializeItem)
 
     const indexByStepId = stepId => uiSteps.value.findIndex(step => step._uiId === stepId)
     const syncSelectionWithSteps = () => {
@@ -197,6 +265,13 @@ export default {
     }
 
     const confirmStart = async () => {
+      const count = uiSteps.value.length
+      if (
+        count > 0 &&
+        !confirm(`Starting a new recording clears the current ${count} line${count === 1 ? '' : 's'}. Continue?`)
+      ) {
+        return
+      }
       const url = startUrl.value.trim()
       confirmStartDisabled.value = true
       const result = await callBg('start', url, undefined, clearSiteData.value)
@@ -238,9 +313,29 @@ export default {
       if (!ok) uiSteps.value = prev
     }
 
-    const toggleStepSelection = stepId => {
-      if (selectedStepIds.has(stepId)) selectedStepIds.delete(stepId)
-      else selectedStepIds.add(stepId)
+    /**
+     * Toggles a top-level item's selection. With extendRange (Shift-click),
+     * every item between the previously clicked item and this one is set to
+     * the clicked item's new state.
+     */
+    const toggleStepSelection = (stepId, extendRange = false) => {
+      const targetIndex = indexByStepId(stepId)
+      const anchorIndex =
+        extendRange && selectionAnchorId ? indexByStepId(selectionAnchorId) : -1
+      if (targetIndex >= 0 && anchorIndex >= 0 && anchorIndex !== targetIndex) {
+        const select = !selectedStepIds.has(stepId)
+        const from = Math.min(anchorIndex, targetIndex)
+        const to = Math.max(anchorIndex, targetIndex)
+        uiSteps.value.slice(from, to + 1).forEach(item => {
+          if (select) selectedStepIds.add(item._uiId)
+          else selectedStepIds.delete(item._uiId)
+        })
+      } else if (selectedStepIds.has(stepId)) {
+        selectedStepIds.delete(stepId)
+      } else {
+        selectedStepIds.add(stepId)
+      }
+      selectionAnchorId = stepId
       if (selectedStepIds.size > 0) {
         isBulkActionsHidden.value = false
       }
@@ -264,12 +359,7 @@ export default {
           if (selected) copiedSourceStepIds.add(step._uiId)
           return selected
         })
-        .map(step => ({
-          command: step.command,
-          target: step.target,
-          value: step.value,
-          insertBeforeLastCommand: step.insertBeforeLastCommand,
-        }))
+        .map(serializeItem)
       selectedStepIds.clear()
       isPasteMode.value = false
       isBulkActionsHidden.value = false
@@ -294,7 +384,7 @@ export default {
       if (targetIndex < 0 || copiedSteps.value.length === 0) return
       const prev = uiSteps.value.slice()
       const insertAt = position === 'before' ? targetIndex : targetIndex + 1
-      const newSteps = copiedSteps.value.map(step => ({ ...step, _uiId: `step-${stepIdCounter.value++}` }))
+      const newSteps = copiedSteps.value.map(instantiateItem)
       uiSteps.value.splice(insertAt, 0, ...newSteps)
       isPasteMode.value = false
       copiedSourceStepIds.clear()
@@ -305,8 +395,8 @@ export default {
     const pasteCopiedStepsToEnd = async () => {
       if (copiedSteps.value.length === 0) return
       const prev = uiSteps.value.slice()
-      copiedSteps.value.forEach(step => {
-        uiSteps.value.push({ ...step, _uiId: `step-${stepIdCounter.value++}` })
+      copiedSteps.value.forEach(item => {
+        uiSteps.value.push(instantiateItem(item))
       })
       isPasteMode.value = false
       copiedSourceStepIds.clear()
@@ -321,6 +411,106 @@ export default {
         return
       }
       await pasteCopiedStepsToEnd()
+    }
+
+    const selectedIndices = computed(() =>
+      uiSteps.value
+        .map((item, index) => (selectedStepIds.has(item._uiId) ? index : -1))
+        .filter(index => index >= 0)
+    )
+
+    // Reason the f(x) action is unavailable, or null when it can be used
+    const createFunctionBlocker = computed(() => {
+      const indices = selectedIndices.value
+      if (indices.length < 2) return 'Select at least two steps to create a function'
+      if (indices.some(index => isFunctionItem(uiSteps.value[index]))) {
+        return 'Functions cannot contain other functions'
+      }
+      if (indices[indices.length - 1] - indices[0] !== indices.length - 1) {
+        return 'Select adjacent steps to create a function'
+      }
+      return null
+    })
+
+    const findFunction = functionId =>
+      uiSteps.value.find(item => isFunctionItem(item) && item._uiId === functionId)
+
+    const updateFunction = async (functionId, changes) => {
+      const prev = uiSteps.value
+      uiSteps.value = uiSteps.value.map(item =>
+        item._uiId === functionId ? { ...item, ...changes } : item
+      )
+      const ok = await persistSteps()
+      if (!ok) uiSteps.value = prev
+    }
+
+    const createFunctionFromSelection = async ({ name, parameters }) => {
+      if (createFunctionBlocker.value) return
+      const prev = uiSteps.value
+      const start = selectedIndices.value[0]
+      const count = selectedIndices.value.length
+      const id = createFunctionId()
+      const fn = withChildUiIds({
+        type: 'function',
+        id,
+        name,
+        parameters,
+        collapsed: false,
+        steps: uiSteps.value.slice(start, start + count).map(serializeStep),
+      })
+      const next = uiSteps.value.slice()
+      next.splice(start, count, { ...fn, _uiId: id })
+      uiSteps.value = next
+      selectedStepIds.clear()
+      const ok = await persistSteps()
+      if (!ok) uiSteps.value = prev
+    }
+
+    const openCreateFunctionModal = () => {
+      if (createFunctionBlocker.value) return
+      Object.assign(functionModal, {
+        show: true,
+        mode: 'create',
+        functionId: null,
+        name: '',
+        parameters: [],
+      })
+    }
+
+    const openEditFunctionModal = functionId => {
+      const fn = findFunction(functionId)
+      if (!fn) return
+      Object.assign(functionModal, {
+        show: true,
+        mode: 'edit',
+        functionId,
+        name: fn.name,
+        parameters: fn.parameters.map(parameter => ({ ...parameter })),
+      })
+    }
+
+    const closeFunctionModal = () => {
+      functionModal.show = false
+    }
+
+    const saveFunctionModal = async value => {
+      closeFunctionModal()
+      if (functionModal.mode === 'create') {
+        await createFunctionFromSelection(value)
+      } else {
+        await updateFunction(functionModal.functionId, value)
+      }
+    }
+
+    const toggleFunctionCollapsed = async functionId => {
+      const fn = findFunction(functionId)
+      if (!fn) return
+      await updateFunction(functionId, { collapsed: !fn.collapsed })
+    }
+
+    const renameFunction = async (functionId, name) => {
+      if (!findFunction(functionId)) return
+      await updateFunction(functionId, { name })
     }
 
     const moveStep = (fromIndex, toIndex) => {
@@ -339,7 +529,8 @@ export default {
     }
 
     const getDropIndex = clientY => {
-      const rows = Array.from(document.querySelectorAll('.step'))
+      // Top-level items only; a function block moves as one unit
+      const rows = Array.from(document.querySelectorAll('.steps > .step-item'))
       for (let i = 0; i < rows.length; i += 1) {
         const rect = rows[i].getBoundingClientRect()
         if (clientY < rect.top + rect.height / 2) return i
@@ -431,6 +622,14 @@ export default {
       insertCopiedSteps,
       startDrag,
       draggingStepId,
+      functionModal,
+      createFunctionBlocker,
+      openCreateFunctionModal,
+      openEditFunctionModal,
+      closeFunctionModal,
+      saveFunctionModal,
+      toggleFunctionCollapsed,
+      renameFunction,
     }
   },
 }

@@ -37,7 +37,11 @@ let isUpdatingUiWindowBounds = false
 
 function getSocket() {
   if (!socket) {
-    socket = eio(globalThis.socketUrl || 'ws://localhost:4445')
+    // WebSocket only: the default polling transport falls back to JSONP,
+    // which needs `document` and breaks in Chrome's MV3 service worker.
+    socket = eio(globalThis.socketUrl || 'ws://localhost:4445', {
+      transports: ['websocket'],
+    })
   }
   if (!socketListenersReady) {
     socketListenersReady = true
@@ -82,20 +86,32 @@ function getSocket() {
 
 // === State Persistence ===
 
-async function persistState() {
+const snapshotState = () => ({
+  recordedSteps: recordedSteps.slice(),
+  activeSessionId,
+  isPaused,
+  isRecording,
+  uiWindowId,
+})
+
+// Session storage survives the background being unloaded when idle (Chrome's
+// service worker, Firefox's event page) but is cleared on browser restart.
+async function syncSessionState() {
   try {
-    await browser.storage.local.set({
-      [STORAGE_KEY]: {
-        recordedSteps: recordedSteps.slice(),
-        activeSessionId,
-        isPaused,
-        isRecording,
-        uiWindowId,
-      },
-    })
+    await browser.storage.session.set({ [STORAGE_KEY]: snapshotState() })
   } catch (e) {
     // best-effort
   }
+}
+
+// Local storage keeps a paused recording across browser restarts.
+async function persistState() {
+  try {
+    await browser.storage.local.set({ [STORAGE_KEY]: snapshotState() })
+  } catch (e) {
+    // best-effort
+  }
+  await syncSessionState()
 }
 
 async function clearSavedState() {
@@ -104,30 +120,43 @@ async function clearSavedState() {
   } catch (e) {
     // best-effort
   }
+  await syncSessionState()
+}
+
+async function readSavedState() {
+  try {
+    const sessionResult = await browser.storage.session.get(STORAGE_KEY)
+    if (sessionResult[STORAGE_KEY]) return sessionResult[STORAGE_KEY]
+  } catch (e) {
+    // fall through to local storage
+  }
+  const localResult = await browser.storage.local.get(STORAGE_KEY)
+  const saved = localResult[STORAGE_KEY]
+  if (saved) await browser.storage.local.remove(STORAGE_KEY)
+  return saved
 }
 
 async function restoreState() {
   try {
-    const result = await browser.storage.local.get(STORAGE_KEY)
-    const saved = result[STORAGE_KEY]
+    const saved = await readSavedState()
     if (!saved || !Array.isArray(saved.recordedSteps)) return
 
-    recordedSteps.length = 0
-    saved.recordedSteps.forEach(step => recordedSteps.push(step))
+    // Steps recorded while restore was in flight came after the saved ones
+    recordedSteps.unshift(...saved.recordedSteps)
     activeSessionId = saved.activeSessionId || null
     isPaused = saved.isPaused || false
     isRecording = saved.isRecording || false
     uiWindowId = saved.uiWindowId || null
 
-    await clearSavedState()
+    await syncSessionState()
     notifyUiUpdate('restore')
   } catch (e) {
     // best-effort
   }
 }
 
-// Restore any previously saved state on startup
-restoreState()
+// Restore any previously saved state on startup; message handlers wait on it
+const stateRestored = restoreState()
 
 const notifyUiUpdate = reason => {
   browser.runtime
@@ -151,6 +180,7 @@ const record = (command, target, value, insertBeforeLastCommand) => {
     },
   }
   recordedSteps.push(payload.payload)
+  syncSessionState()
   notifyUiUpdate('record')
   if (getSocket() && getSocket().readyState === 'open') {
     return getSocket().send(JSON.stringify(payload))
@@ -183,6 +213,7 @@ const attach = ({ sessionId, hasRecorded: hasRecordedFlag = false }) => {
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
+  syncSessionState()
   notifyUiUpdate('attach')
   return globalThis.recorder.attach(sessionId)
 }
@@ -191,6 +222,7 @@ const detach = () => {
   isRecording = false
   isPaused = false
   activeSessionId = null
+  syncSessionState()
   notifyUiUpdate('detach')
   return globalThis.recorder.detach()
 }
@@ -377,6 +409,9 @@ const startRecording = async (url, sessionIdOverride, options = {}) => {
   }
 
   globalThis.hasRecorded = false
+  // Each recording starts fresh; functions are scoped to the current
+  // recording until the WebUI provides a project function library
+  recordedSteps.length = 0
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
@@ -425,19 +460,53 @@ const clear = () => {
   return { ok: true }
 }
 
+const sanitizeStep = step => {
+  if (!step || typeof step.command !== 'string') return null
+  return {
+    command: step.command,
+    target: step.target,
+    value: step.value,
+    insertBeforeLastCommand: step.insertBeforeLastCommand,
+  }
+}
+
+const sanitizeParameter = parameter => {
+  if (!parameter || typeof parameter.name !== 'string') return null
+  return typeof parameter.type === 'string' && parameter.type
+    ? { name: parameter.name, type: parameter.type }
+    : { name: parameter.name }
+}
+
+/**
+ * Normalizes a recorder item: either a plain step or a recorder-only function
+ * group of the form { type: 'function', id, name, parameters, collapsed, steps }.
+ *
+ * @param item the item received from the UI
+ * @returns {Object|null} the sanitized item, or null if it is invalid
+ */
+const sanitizeItem = item => {
+  if (!item || item.type !== 'function') return sanitizeStep(item)
+  if (typeof item.id !== 'string' || typeof item.name !== 'string') return null
+  const parameters = Array.isArray(item.parameters) ? item.parameters : []
+  const steps = Array.isArray(item.steps) ? item.steps : []
+  return {
+    type: 'function',
+    id: item.id,
+    name: item.name,
+    parameters: parameters.map(sanitizeParameter).filter(Boolean),
+    collapsed: !!item.collapsed,
+    steps: steps.map(sanitizeStep).filter(Boolean),
+  }
+}
+
 const replaceSteps = nextSteps => {
   if (!Array.isArray(nextSteps)) {
     return { ok: false, error: 'Steps payload must be an array.' }
   }
   recordedSteps.length = 0
-  nextSteps.forEach(step => {
-    if (!step || typeof step.command !== 'string') return
-    recordedSteps.push({
-      command: step.command,
-      target: step.target,
-      value: step.value,
-      insertBeforeLastCommand: step.insertBeforeLastCommand,
-    })
+  nextSteps.forEach(item => {
+    const sanitized = sanitizeItem(item)
+    if (sanitized) recordedSteps.push(sanitized)
   })
   persistState()
   notifyUiUpdate('replaceSteps')
@@ -463,6 +532,7 @@ const openUiWindow = async () => {
     height: MIN_UI_WINDOW_HEIGHT,
   })
   uiWindowId = win.id
+  syncSessionState()
 }
 
 if (
@@ -503,6 +573,7 @@ if (browser.windows.onRemoved && typeof browser.windows.onRemoved.addListener ==
   browser.windows.onRemoved.addListener(windowId => {
     if (windowId === uiWindowId) {
       uiWindowId = null
+      syncSessionState()
     }
   })
 }
@@ -527,6 +598,10 @@ const selectElement = async (sessionId, windowName) => {
 
 browser.runtime.onMessage.addListener(message => {
   if (!message || !message.tmsStudio) return
+  return stateRestored.then(() => handleStudioMessage(message))
+})
+
+const handleStudioMessage = message => {
   if (message.tmsStudio === 'start') {
     return startRecording(message.url, message.sessionId, {
       clearSiteData: message.clearSiteData === true,
@@ -562,7 +637,7 @@ browser.runtime.onMessage.addListener(message => {
   if (message.tmsStudio === 'clearSiteData') {
     return clearSiteData(message.url)
   }
-})
+}
 
 globalThis.tmsApi = {
   start: startRecording,
