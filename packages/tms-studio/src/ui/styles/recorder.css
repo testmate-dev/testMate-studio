@@ -498,6 +498,22 @@ select.modal-input {
   margin-top: 4px;
 }
 
+.function-param-hint {
+  grid-column: 1 / -1;
+  margin-top: -2px;
+  font-size: 11px;
+  color: #777;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.function-params-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: #555;
+}
+
 .function-param-remove {
   width: 30px;
   padding: 0;

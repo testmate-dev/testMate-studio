@@ -11,8 +11,8 @@ inserting existing functions.
 |---|---|---|
 | — | Cross-browser fixes, state saving, performance, UI rename | Done, tested in Firefox and Chrome |
 | — | [TMD-8](https://testmate.youtrack.cloud/issue/TMD-8) Create a function from selected lines | Done, tested in Firefox and Chrome |
-| 1 | Field context and suggested parameters | Next |
-| 2 | [TMD-11](https://testmate.youtrack.cloud/issue/TMD-11) Auto-recognise form functions | Planned |
+| 1 | Field context and suggested parameters | Built, awaiting browser testing |
+| 2 | [TMD-11](https://testmate.youtrack.cloud/issue/TMD-11) Auto-recognise form functions | Next |
 | 3 | [TMD-14](https://testmate.youtrack.cloud/issue/TMD-14) Insert a function | Planned |
 | 4 | [TMD-12](https://testmate.youtrack.cloud/issue/TMD-12) Function library, nesting, and matching | Planned |
 | — | [TMD-13](https://testmate.youtrack.cloud/issue/TMD-13) Edit recorded lines | On hold (needs low-code English, which needs the WebUI) |
@@ -251,11 +251,38 @@ selected line that has a typed or selected value:
   survives the background being unloaded when idle. The pause snapshot in
   `storage.local` still survives browser restarts. Message handlers wait for
   restoration to finish.
+- **Recording survives the background being unloaded:** Chrome stops an
+  idle service worker after about 30s, and the recorder used to lose its
+  listeners and window/tab bookkeeping, so only `open` got recorded.
+  - Recorder listeners are now registered once at startup and ignore events
+    unless a recording is attached.
+  - The recorder state, `WindowSession`, and `hasRecorded` are saved in
+    `storage.session` and restored before any event is handled.
+  - Starting a recording detaches any stale one first.
+  - Verified in Chromium 156 by stopping the worker mid-recording.
 - **Performance:** the full-page element count no longer runs on every
   mouseover or page change. This was the cause of the Firefox "slowing down"
   warning.
 - **New recordings** start fresh, after a confirmation when lines exist.
 - **UI** renamed from "Testmate Recorder" to "Testmate Studio".
+- **Window size:** the studio opens at 560×640, and the page enforces a
+  minimum **viewport** of 540×600 CSS pixels
+  (`ui/composables/useMinWindowSize.js`, `common/ui-window.js`). It grows the
+  window by whatever is missing.
+  - Firefox Developer Edition 150 reserves about 204×241 px of a popup for
+    hidden toolbars, so a 560×640 window showed only a 356×399 page.
+  - Firefox also has no `windows.onBoundsChanged`.
+  - This replaces the Chrome-only background clamp.
+  - The page saves the resulting window size (`tms:uiWindowSize` in
+    `storage.local`), and the background opens the next window at that
+    size. So only the very first open in a profile can visibly resize, and
+    the studio reopens at the user's last size.
+  - `ui.html` paints the background inline, so there's no white flash
+    before `ui.js` injects the stylesheet.
+- **Firefox add-on ID:** `testmate-studio@testmate.dev`
+  (`browser_specific_settings.gecko.id`). Storage now survives temporary
+  reloads, and the ID is needed for signing on addons.mozilla.org. Chrome
+  shows a developer-only "Unrecognized manifest key" warning for it.
 - **Selection:** Shift-click range selection. Items between the anchor and the
   clicked item take the clicked item's new state, and a function counts as one
   item.

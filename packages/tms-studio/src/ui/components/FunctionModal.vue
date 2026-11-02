@@ -57,6 +57,16 @@
           @click="removeParameter(index)"
           v-html="icons.close"
         ></button>
+        <div v-if="parameter.link" class="function-param-hint">
+          From line {{ parameter.link.lineLabel }}: {{ parameter.link.value }}
+        </div>
+        <div v-else-if="parameter.value" class="function-param-hint">
+          Value: {{ parameter.value }}
+        </div>
+      </div>
+      <div v-if="hasLinkedParameters" class="function-params-note">
+        Linked lines will use <code>$name</code> in place of the recorded value. Remove a
+        parameter to keep that line's value fixed.
       </div>
 
       <ul v-if="errors.length" class="function-errors">
@@ -74,7 +84,7 @@
 </template>
 
 <script>
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { PARAMETER_TYPES, validateFunctionDraft } from '../utils/function-utils'
 
 export default {
@@ -93,11 +103,18 @@ export default {
     const errors = ref([])
     let parameterKey = 0
 
+    // link: suggested from a line (create); originalName/value: existing
+    // parameter (edit), so renames and removals can update the lines
     const toDraftParameter = parameter => ({
       key: parameterKey++,
       name: parameter.name || '',
       type: parameter.type || '',
+      link: parameter.link || null,
+      originalName: parameter.originalName || '',
+      value: parameter.value || '',
     })
+
+    const hasLinkedParameters = computed(() => parameters.value.some(p => p.link))
 
     // Keeps a type saved before it was in the list selectable when editing
     const typeOptions = parameter =>
@@ -143,6 +160,7 @@ export default {
       parameters,
       errors,
       typeOptions,
+      hasLinkedParameters,
       addParameter,
       removeParameter,
       save,

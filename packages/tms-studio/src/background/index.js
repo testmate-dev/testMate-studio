@@ -20,6 +20,7 @@ import browser from 'webextension-polyfill'
 import BackgroundRecorder from './recorder'
 import WindowSession from './window-session'
 import { select, cancelSelect } from './select'
+import { UI_WINDOW_SIZE_KEY, windowSizeToOpen } from '../common/ui-window'
 
 const STORAGE_KEY = 'tms:studioState'
 
@@ -31,9 +32,6 @@ let activeSessionId = null
 let isRecording = false
 let isPaused = false
 let uiWindowId = null
-const MIN_UI_WINDOW_WIDTH = 560
-const MIN_UI_WINDOW_HEIGHT = 640
-let isUpdatingUiWindowBounds = false
 
 function getSocket() {
   if (!socket) {
@@ -92,6 +90,11 @@ const snapshotState = () => ({
   isPaused,
   isRecording,
   uiWindowId,
+  hasRecorded: !!globalThis.hasRecorded,
+  // Which windows/tabs belong to the recording; only meaningful until the
+  // browser restarts, so only restored from session storage
+  recorder: globalThis.recorder ? globalThis.recorder.serialize() : undefined,
+  windowSession: windowSession.serialize(),
 })
 
 // Session storage survives the background being unloaded when idle (Chrome's
@@ -123,22 +126,29 @@ async function clearSavedState() {
   await syncSessionState()
 }
 
+/**
+ * @returns {Promise<{saved: Object, fromSession: boolean}>} the saved state
+ * and whether it came from session storage (i.e. the browser has not
+ * restarted since it was saved)
+ */
 async function readSavedState() {
   try {
     const sessionResult = await browser.storage.session.get(STORAGE_KEY)
-    if (sessionResult[STORAGE_KEY]) return sessionResult[STORAGE_KEY]
+    if (sessionResult[STORAGE_KEY]) {
+      return { saved: sessionResult[STORAGE_KEY], fromSession: true }
+    }
   } catch (e) {
     // fall through to local storage
   }
   const localResult = await browser.storage.local.get(STORAGE_KEY)
   const saved = localResult[STORAGE_KEY]
   if (saved) await browser.storage.local.remove(STORAGE_KEY)
-  return saved
+  return { saved, fromSession: false }
 }
 
 async function restoreState() {
   try {
-    const saved = await readSavedState()
+    const { saved, fromSession } = await readSavedState()
     if (!saved || !Array.isArray(saved.recordedSteps)) return
 
     // Steps recorded while restore was in flight came after the saved ones
@@ -147,6 +157,12 @@ async function restoreState() {
     isPaused = saved.isPaused || false
     isRecording = saved.isRecording || false
     uiWindowId = saved.uiWindowId || null
+    if (fromSession) {
+      // The background was unloaded mid-session: reattach to the recording
+      globalThis.hasRecorded = !!saved.hasRecorded
+      windowSession.restore(saved.windowSession)
+      globalThis.recorder.restore(saved.recorder)
+    }
 
     await syncSessionState()
     notifyUiUpdate('restore')
@@ -167,7 +183,7 @@ const notifyUiUpdate = reason => {
     .catch(() => {})
 }
 
-const record = (command, target, value, insertBeforeLastCommand) => {
+const record = (command, target, value, insertBeforeLastCommand, context) => {
   if (isPaused) return
   globalThis.hasRecorded = true
   const payload = {
@@ -179,7 +195,11 @@ const record = (command, target, value, insertBeforeLastCommand) => {
       insertBeforeLastCommand,
     },
   }
-  recordedSteps.push(payload.payload)
+  // Field context is studio-only; the socket payload keeps its existing shape
+  const sanitizedContext = sanitizeContext(context)
+  recordedSteps.push(
+    sanitizedContext ? { ...payload.payload, context: sanitizedContext } : payload.payload
+  )
   syncSessionState()
   notifyUiUpdate('record')
   if (getSocket() && getSocket().readyState === 'open') {
@@ -207,24 +227,23 @@ globalThis.recorder = new BackgroundRecorder(
   recordOpensWindow,
   hasRecorded
 )
+globalThis.recorder.waitUntilRestored(stateRestored)
 
 const attach = ({ sessionId, hasRecorded: hasRecordedFlag = false }) => {
   globalThis.hasRecorded = hasRecordedFlag
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
-  syncSessionState()
   notifyUiUpdate('attach')
-  return globalThis.recorder.attach(sessionId)
+  return globalThis.recorder.attach(sessionId).finally(syncSessionState)
 }
 
 const detach = () => {
   isRecording = false
   isPaused = false
   activeSessionId = null
-  syncSessionState()
   notifyUiUpdate('detach')
-  return globalThis.recorder.detach()
+  return globalThis.recorder.detach().finally(syncSessionState)
 }
 
 const normalizeUrl = rawUrl => {
@@ -388,7 +407,7 @@ const startRecording = async (url, sessionIdOverride, options = {}) => {
   if (options.clearSiteData === true) {
     const liveTab = await browser.tabs.get(tab.id)
     const finalUrl = liveTab && liveTab.url ? liveTab.url : startUrl
-    let finalHostname = null
+    let finalHostname;
     try {
       finalHostname = new URL(finalUrl).hostname
     } catch (e) {
@@ -412,6 +431,9 @@ const startRecording = async (url, sessionIdOverride, options = {}) => {
   // Each recording starts fresh; functions are scoped to the current
   // recording until the WebUI provides a project function library
   recordedSteps.length = 0
+  // attachWithTab is a no-op while still attached, which would leave the new
+  // window unregistered and its lines ignored
+  if (globalThis.recorder.attached) await globalThis.recorder.detach()
   activeSessionId = sessionId
   isRecording = true
   isPaused = false
@@ -460,21 +482,52 @@ const clear = () => {
   return { ok: true }
 }
 
+const CONTEXT_STRING_FIELDS = [
+  'fieldName',
+  'fieldType',
+  'autocomplete',
+  'label',
+  'step',
+  'groupKey',
+  'groupLabel',
+]
+
+/**
+ * Keeps only the known field-context properties recorded by the content
+ * script (see content/form-context.js).
+ *
+ * @param context the context received with a recorded line
+ * @returns {Object|undefined}
+ */
+function sanitizeContext(context) {
+  if (!context || typeof context !== 'object') return undefined
+  const sanitized = {}
+  CONTEXT_STRING_FIELDS.forEach(field => {
+    if (typeof context[field] === 'string' && context[field]) sanitized[field] = context[field]
+  })
+  if (typeof context.isFillable === 'boolean') sanitized.isFillable = context.isFillable
+  return Object.keys(sanitized).length ? sanitized : undefined
+}
+
 const sanitizeStep = step => {
   if (!step || typeof step.command !== 'string') return null
-  return {
+  const sanitized = {
     command: step.command,
     target: step.target,
     value: step.value,
     insertBeforeLastCommand: step.insertBeforeLastCommand,
   }
+  const context = sanitizeContext(step.context)
+  if (context) sanitized.context = context
+  return sanitized
 }
 
 const sanitizeParameter = parameter => {
   if (!parameter || typeof parameter.name !== 'string') return null
-  return typeof parameter.type === 'string' && parameter.type
-    ? { name: parameter.name, type: parameter.type }
-    : { name: parameter.name }
+  const sanitized = { name: parameter.name }
+  if (typeof parameter.type === 'string' && parameter.type) sanitized.type = parameter.type
+  if (typeof parameter.value === 'string') sanitized.value = parameter.value
+  return sanitized
 }
 
 /**
@@ -525,48 +578,21 @@ const openUiWindow = async () => {
       uiWindowId = null
     }
   }
+  // Reuse the last size the studio page saved, so the window opens at a size
+  // that already fits instead of visibly resizing after it loads
+  let saved
+  try {
+    saved = (await browser.storage.local.get(UI_WINDOW_SIZE_KEY))[UI_WINDOW_SIZE_KEY]
+  } catch (e) {
+    // fall back to the default size
+  }
   const win = await browser.windows.create({
     url: browser.runtime.getURL('ui.html'),
     type: 'popup',
-    width: MIN_UI_WINDOW_WIDTH,
-    height: MIN_UI_WINDOW_HEIGHT,
+    ...windowSizeToOpen(saved),
   })
   uiWindowId = win.id
   syncSessionState()
-}
-
-if (
-  browser.windows.onBoundsChanged &&
-  typeof browser.windows.onBoundsChanged.addListener === 'function'
-) {
-  browser.windows.onBoundsChanged.addListener(async win => {
-    if (!uiWindowId || win.id !== uiWindowId || isUpdatingUiWindowBounds) {
-      return
-    }
-
-    const nextWidth = Math.max(
-      win.width || MIN_UI_WINDOW_WIDTH,
-      MIN_UI_WINDOW_WIDTH
-    )
-    const nextHeight = Math.max(
-      win.height || MIN_UI_WINDOW_HEIGHT,
-      MIN_UI_WINDOW_HEIGHT
-    )
-
-    if (nextWidth === win.width && nextHeight === win.height) {
-      return
-    }
-
-    isUpdatingUiWindowBounds = true
-    try {
-      await browser.windows.update(uiWindowId, {
-        width: nextWidth,
-        height: nextHeight,
-      })
-    } finally {
-      isUpdatingUiWindowBounds = false
-    }
-  })
 }
 
 if (browser.windows.onRemoved && typeof browser.windows.onRemoved.addListener === 'function') {

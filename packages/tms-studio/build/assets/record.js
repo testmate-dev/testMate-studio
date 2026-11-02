@@ -406,6 +406,63 @@ const locatorBuilders=new _locator_builders__WEBPACK_IMPORTED_MODULE_2__["defaul
 
 /***/ },
 
+/***/ "./content/form-context.js"
+/*!*********************************!*\
+  !*** ./content/form-context.js ***!
+  \*********************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   getFieldContext: () => (/* binding */ getFieldContext),
+/* harmony export */   getFieldLabel: () => (/* binding */ getFieldLabel),
+/* harmony export */   getFieldType: () => (/* binding */ getFieldType),
+/* harmony export */   getGroupContainer: () => (/* binding */ getGroupContainer)
+/* harmony export */ });
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+// Describes the field a recorded line acted on, so the studio can suggest
+// function parameters and (TMD-11) group lines that belong to one form.
+// Never includes the field's value: context may be kept for learning.
+const MAX_TEXT_LENGTH=80;const MAX_CONTAINER_DEPTH=8;const GROUP_SELECTOR='form, fieldset, dialog, [role="form"], [role="search"], [role="dialog"]';const BUTTON_SELECTOR='button, input[type="submit"], input[type="button"], input[type="image"], [role="button"]';const cleanText=text=>{if(!text)return'';const cleaned=text.replace(/\s+/g,' ').trim();return cleaned.length>MAX_TEXT_LENGTH?cleaned.slice(0,MAX_TEXT_LENGTH):cleaned;};const textOfIds=(doc,ids)=>cleanText(ids.split(/\s+/).map(id=>{const el=doc.getElementById(id);return el?el.textContent:'';}).join(' '));/**
+ * @param element a form field
+ * @returns {string} the field's accessible label, or ''
+ */function getFieldLabel(element){const doc=element.ownerDocument;const labelledBy=element.getAttribute('aria-labelledby');if(labelledBy){const text=textOfIds(doc,labelledBy);if(text)return text;}const ariaLabel=cleanText(element.getAttribute('aria-label'));if(ariaLabel)return ariaLabel;if(element.labels&&element.labels.length>0){const text=cleanText(element.labels[0].textContent);if(text)return text;}return cleanText(element.getAttribute('placeholder')||element.getAttribute('title'));}/**
+ * @param element the element a line acted on
+ * @returns {string} input type for inputs, otherwise the lowercase tag name
+ */function getFieldType(element){const tagName=element.tagName.toLowerCase();if(tagName==='input')return(element.getAttribute('type')||'text').toLowerCase();if(element.isContentEditable)return'contenteditable';return tagName;}const isFillable=element=>{const fieldType=getFieldType(element);if(['select','textarea','contenteditable'].includes(fieldType))return true;if(element.tagName.toLowerCase()!=='input')return false;return!['button','submit','reset','image','hidden'].includes(fieldType);};/**
+ * Finds the element that groups a field with the rest of its form: a real
+ * <form> (including a `form="id"` owner), fieldset, dialog or form-like role,
+ * or otherwise the nearest ancestor that also contains a button.
+ *
+ * @param element a form field
+ * @returns {Element|null}
+ */function getGroupContainer(element){if(element.form)return element.form;const group=element.closest(GROUP_SELECTOR);if(group)return group;let current=element.parentElement;for(let depth=0;current&&depth<MAX_CONTAINER_DEPTH;depth++){if(current.tagName.toLowerCase()==='body')return null;if(current.querySelector(BUTTON_SELECTOR))return current;current=current.parentElement;}return null;}const getGroupLabel=container=>{const ariaLabel=cleanText(container.getAttribute('aria-label'));if(ariaLabel)return ariaLabel;const labelledBy=container.getAttribute('aria-labelledby');if(labelledBy){const text=textOfIds(container.ownerDocument,labelledBy);if(text)return text;}const heading=container.querySelector('legend, h1, h2, h3, h4');return heading?cleanText(heading.textContent):'';};/**
+ * Builds the context recorded alongside a line.
+ *
+ * @param element the element the line acted on
+ * @param buildLocator function returning a locator string for an element
+ * @returns {Object} context with only the fields that have values
+ */function getFieldContext(element,buildLocator){const context={fieldName:element.getAttribute('name')||element.id||'',fieldType:getFieldType(element),autocomplete:(element.getAttribute('autocomplete')||'').trim().toLowerCase(),label:getFieldLabel(element),isFillable:isFillable(element)};if(context.fieldType==='number'){context.step=element.getAttribute('step')||'';}const container=getGroupContainer(element);if(container){try{context.groupKey=buildLocator(container);}catch(e){// groupKey is optional
+}context.groupLabel=getGroupLabel(container);}Object.keys(context).forEach(key=>{if(context[key]===''||context[key]===undefined)delete context[key];});return context;}
+
+/***/ },
+
 /***/ "./content/locator-builders.js"
 /*!*************************************!*\
   !*** ./content/locator-builders.js ***!
@@ -618,6 +675,8 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default = /*#__PURE__*/__webpack_require__.n(webextension_polyfill__WEBPACK_IMPORTED_MODULE_0__);
 /* harmony import */ var _record_handlers__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./record-handlers */ "./content/record-handlers.js");
 /* harmony import */ var _prompt_injector__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./prompt-injector */ "./content/prompt-injector.js");
+/* harmony import */ var _locator_builders__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./locator-builders */ "./content/locator-builders.js");
+/* harmony import */ var _form_context__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./form-context */ "./content/form-context.js");
 // Licensed to the Software Freedom Conservancy (SFC) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -636,9 +695,16 @@ __webpack_require__.r(__webpack_exports__);
 // under the License.
 /**
  * @param {Window} window
- */class Recorder{constructor(window){this.window=window;this.eventListeners={};this.mutationObservers={};this.attached=false;this.recordingState={};this.frameLocation='';this.inputTypes=Recorder.inputTypes;this.recalculateFrameLocation=this.recalculateFrameLocation.bind(this);this.attachRecorderHandler=this.attachRecorderHandler.bind(this);this.detachRecorderHandler=this.detachRecorderHandler.bind(this);this.setWindowHandle=this.setWindowHandle.bind(this);this.window.addEventListener('message',this.setWindowHandle);this.window.addEventListener('message',this.setActiveContext);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.recalculateFrameLocation);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.attachRecorderHandler);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.detachRecorderHandler);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({attachRecorderRequest:true}).then(shouldAttach=>{if(shouldAttach){this.addRecorderTracingAttribute();this.attach();}}).catch(()=>{})// runs in the content script of each frame
+ */class Recorder{constructor(window){this.window=window;this.eventListeners={};this.mutationObservers={};this.attached=false;this.recordingState={};this.frameLocation='';this.inputTypes=Recorder.inputTypes;this.locatorBuilders=new _locator_builders__WEBPACK_IMPORTED_MODULE_3__["default"](window);this.recalculateFrameLocation=this.recalculateFrameLocation.bind(this);this.attachRecorderHandler=this.attachRecorderHandler.bind(this);this.detachRecorderHandler=this.detachRecorderHandler.bind(this);this.setWindowHandle=this.setWindowHandle.bind(this);this.window.addEventListener('message',this.setWindowHandle);this.window.addEventListener('message',this.setActiveContext);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.recalculateFrameLocation);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.attachRecorderHandler);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.onMessage.addListener(this.detachRecorderHandler);webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({attachRecorderRequest:true}).then(shouldAttach=>{if(shouldAttach){this.addRecorderTracingAttribute();this.attach();}}).catch(()=>{})// runs in the content script of each frame
 // e.g., once on load
-;(async()=>{await this.getFrameLocation();})();}addRecorderTracingAttribute(){this.window.document.body.setAttribute('data-side-attach-once-loaded','');}attachRecorderHandler(message,_sender,sendResponse){if(message.attachRecorder){this.attach();sendResponse(true);}}detachRecorderHandler(message,_sender,sendResponse){if(message.detachRecorder){this.detach();sendResponse(true);}}/* record */record(command,target,value,insertBeforeLastCommand,actualFrameLocation){return webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({command:command,target:target,value:value,insertBeforeLastCommand:insertBeforeLastCommand,frameLocation:actualFrameLocation!=undefined?actualFrameLocation:this.frameLocation}).catch(()=>{this.detach();});}setWindowHandle(event){if(event.data&&event.data.direction==='from-page-script'&&event.data.action==='set-handle'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({setWindowHandle:true,handle:event.data.args.handle,sessionId:event.data.args.sessionId}).then(()=>{event.source.postMessage({id:event.data.id,direction:'from-content-script'},'*');});}}setActiveContext(event){if(event.data&&event.data.direction==='from-page-script'&&event.data.action==='set-frame'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({setActiveContext:true,frameLocation:event.data.args.frameLocation,sessionId:event.data.args.sessionId}).then(()=>{event.source.postMessage({id:event.data.id,direction:'from-content-script'},'*');});}}/**
+;(async()=>{await this.getFrameLocation();})();}addRecorderTracingAttribute(){this.window.document.body.setAttribute('data-side-attach-once-loaded','');}attachRecorderHandler(message,_sender,sendResponse){if(message.attachRecorder){this.attach();sendResponse(true);}}detachRecorderHandler(message,_sender,sendResponse){if(message.detachRecorder){this.detach();sendResponse(true);}}/* record */record(command,target,value,insertBeforeLastCommand,actualFrameLocation){return webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({command:command,target:target,value:value,context:this.getContext(target),insertBeforeLastCommand:insertBeforeLastCommand,frameLocation:actualFrameLocation!=undefined?actualFrameLocation:this.frameLocation}).catch(()=>{this.detach();});}/**
+   * Describes the element a recorded line targets, found again from the
+   * line's first locator. Best-effort: lines without an element target, or
+   * whose element is already gone, get no context.
+   *
+   * @param target the recorded target: [[locator, strategy], ...] or a string
+   * @returns {Object|undefined}
+   */getContext(target){if(!Array.isArray(target)||!target.length||!Array.isArray(target[0])){return undefined;}try{const element=this.locatorBuilders.findElement(target[0][0]);if(!element||element.nodeType!==1)return undefined;return (0,_form_context__WEBPACK_IMPORTED_MODULE_4__.getFieldContext)(element,container=>{const locator=this.locatorBuilders.build(container);return locator==='LOCATOR_DETECTION_FAILED'?'':locator;});}catch(e){return undefined;}}setWindowHandle(event){if(event.data&&event.data.direction==='from-page-script'&&event.data.action==='set-handle'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({setWindowHandle:true,handle:event.data.args.handle,sessionId:event.data.args.sessionId}).then(()=>{event.source.postMessage({id:event.data.id,direction:'from-content-script'},'*');});}}setActiveContext(event){if(event.data&&event.data.direction==='from-page-script'&&event.data.action==='set-frame'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().runtime.sendMessage({setActiveContext:true,frameLocation:event.data.args.frameLocation,sessionId:event.data.args.sessionId}).then(()=>{event.source.postMessage({id:event.data.id,direction:'from-content-script'},'*');});}}/**
    * @param {string} eventKey
    */parseEventKey(eventKey){if(eventKey.match(/^C_/)){return{eventName:eventKey.substring(2),capture:true};}else{return{eventName:eventKey,capture:false};}}attach(){if(!this.attached){for(let eventKey in Recorder.eventHandlers){const eventInfo=this.parseEventKey(eventKey);const eventName=eventInfo.eventName;const capture=eventInfo.capture;const handlers=Recorder.eventHandlers[eventKey];this.eventListeners[eventKey]=[];for(let i=0;i<handlers.length;i++){// Keep the bound listener so detach() can remove the same reference
 const listener=handlers[i].bind(this);this.window.document.addEventListener(eventName,listener,capture);this.eventListeners[eventKey].push(listener);}}for(let observerName in Recorder.mutationObservers){const{callback,config}=Recorder.mutationObservers[observerName];const observer=new MutationObserver(callback.bind(this));observer.observe(this.window.document.body,config);this.mutationObservers[observerName]=observer;}this.attached=true;this.recordingState={typeTarget:undefined,typeLock:0,focusTarget:null,focusValue:null,tempValue:null,preventType:false,preventClickTwice:false,preventClick:false,enterTarget:null,enterValue:null,tabCheck:null};attachInputListeners(this.recordingState,this.window);(0,_prompt_injector__WEBPACK_IMPORTED_MODULE_2__.attach)(this.record.bind(this));}}detach(){for(let eventKey in this.eventListeners){const eventInfo=this.parseEventKey(eventKey);const eventName=eventInfo.eventName;const capture=eventInfo.capture;for(let i=0;i<this.eventListeners[eventKey].length;i++){this.window.document.removeEventListener(eventName,this.eventListeners[eventKey][i],capture);}}for(let observerName in this.mutationObservers){this.mutationObservers[observerName].disconnect();}this.mutationObservers={};this.eventListeners={};this.attached=false;detachInputListeners(this.recordingState,this.window);(0,_prompt_injector__WEBPACK_IMPORTED_MODULE_2__.detach)();}// set frame id

@@ -82,7 +82,14 @@ import {
   faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { useRecorderApi } from './composables/useRecorderApi'
-import { createFunctionId, isFunctionItem } from './utils/function-utils'
+import { useMinWindowSize } from './composables/useMinWindowSize'
+import {
+  applyParameterEdits,
+  createFunctionId,
+  isFunctionItem,
+  linkParameters,
+  suggestParameters,
+} from './utils/function-utils'
 import RecorderHeader from './components/RecorderHeader.vue'
 import RecorderControls from './components/RecorderControls.vue'
 import BulkActions from './components/BulkActions.vue'
@@ -101,6 +108,7 @@ export default {
   },
   setup() {
     const { callBg, onUpdated } = useRecorderApi()
+    useMinWindowSize()
     const showModal = ref(false)
     const startUrl = ref('')
     const clearSiteData = ref(true)
@@ -199,12 +207,16 @@ export default {
       return `${label}. ${step.command} ${target || ''}${value}`.trim()
     }
 
-    const serializeStep = step => ({
-      command: step.command,
-      target: step.target,
-      value: step.value,
-      insertBeforeLastCommand: step.insertBeforeLastCommand,
-    })
+    const serializeStep = step => {
+      const serialized = {
+        command: step.command,
+        target: step.target,
+        value: step.value,
+        insertBeforeLastCommand: step.insertBeforeLastCommand,
+      }
+      if (step.context) serialized.context = { ...step.context }
+      return serialized
+    }
 
     const serializeItem = item => {
       if (!isFunctionItem(item)) return serializeStep(item)
@@ -450,13 +462,17 @@ export default {
       const start = selectedIndices.value[0]
       const count = selectedIndices.value.length
       const id = createFunctionId()
+      const linked = linkParameters(
+        uiSteps.value.slice(start, start + count).map(serializeStep),
+        parameters
+      )
       const fn = withChildUiIds({
         type: 'function',
         id,
         name,
-        parameters,
+        parameters: linked.parameters,
         collapsed: false,
-        steps: uiSteps.value.slice(start, start + count).map(serializeStep),
+        steps: linked.steps,
       })
       const next = uiSteps.value.slice()
       next.splice(start, count, { ...fn, _uiId: id })
@@ -468,12 +484,26 @@ export default {
 
     const openCreateFunctionModal = () => {
       if (createFunctionBlocker.value) return
+      const start = selectedIndices.value[0]
+      const selectedSteps = selectedIndices.value.map(index => uiSteps.value[index])
+      // The new function takes the first selected row's number, so its lines
+      // will be numbered start.1, start.2, …
+      const parameters = suggestParameters(selectedSteps).map(suggestion => ({
+        name: suggestion.name,
+        type: suggestion.type,
+        link: {
+          stepIndex: suggestion.stepIndex,
+          prefix: suggestion.prefix,
+          value: suggestion.value,
+          lineLabel: `${start + 1}.${suggestion.stepIndex + 1}`,
+        },
+      }))
       Object.assign(functionModal, {
         show: true,
         mode: 'create',
         functionId: null,
         name: '',
-        parameters: [],
+        parameters,
       })
     }
 
@@ -485,7 +515,10 @@ export default {
         mode: 'edit',
         functionId,
         name: fn.name,
-        parameters: fn.parameters.map(parameter => ({ ...parameter })),
+        parameters: fn.parameters.map(parameter => ({
+          ...parameter,
+          originalName: parameter.name,
+        })),
       })
     }
 
@@ -493,12 +526,23 @@ export default {
       functionModal.show = false
     }
 
+    const editFunction = async (functionId, { name, parameters }) => {
+      const fn = findFunction(functionId)
+      if (!fn) return
+      const edited = applyParameterEdits(fn.steps.map(serializeStep), fn.parameters, parameters)
+      await updateFunction(functionId, {
+        name,
+        parameters: edited.parameters,
+        steps: withChildUiIds({ id: fn.id, steps: edited.steps }).steps,
+      })
+    }
+
     const saveFunctionModal = async value => {
       closeFunctionModal()
       if (functionModal.mode === 'create') {
         await createFunctionFromSelection(value)
       } else {
-        await updateFunction(functionModal.functionId, value)
+        await editFunction(functionModal.functionId, value)
       }
     }
 

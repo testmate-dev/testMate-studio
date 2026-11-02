@@ -18,6 +18,8 @@
 import browser from 'webextension-polyfill'
 import { handlers, observers } from './record-handlers'
 import { attach, detach } from './prompt-injector'
+import LocatorBuilders from './locator-builders'
+import { getFieldContext } from './form-context'
 
 /**
  * @param {Window} window
@@ -31,6 +33,7 @@ export default class Recorder {
     this.recordingState = {}
     this.frameLocation = ''
     this.inputTypes = Recorder.inputTypes
+    this.locatorBuilders = new LocatorBuilders(window)
     this.recalculateFrameLocation = this.recalculateFrameLocation.bind(this)
     this.attachRecorderHandler = this.attachRecorderHandler.bind(this)
     this.detachRecorderHandler = this.detachRecorderHandler.bind(this)
@@ -86,15 +89,40 @@ export default class Recorder {
         command: command,
         target: target,
         value: value,
+        context: this.getContext(target),
         insertBeforeLastCommand: insertBeforeLastCommand,
         frameLocation:
-          actualFrameLocation != undefined
+          actualFrameLocation !== undefined
             ? actualFrameLocation
             : this.frameLocation,
       })
       .catch(() => {
         this.detach()
       })
+  }
+
+  /**
+   * Describes the element a recorded line targets, found again from the
+   * line's first locator. Best-effort: lines without an element target, or
+   * whose element is already gone, get no context.
+   *
+   * @param target the recorded target: [[locator, strategy], ...] or a string
+   * @returns {Object|undefined}
+   */
+  getContext(target) {
+    if (!Array.isArray(target) || !target.length || !Array.isArray(target[0])) {
+      return undefined
+    }
+    try {
+      const element = this.locatorBuilders.findElement(target[0][0])
+      if (!element || element.nodeType !== 1) return undefined
+      return getFieldContext(element, container => {
+        const locator = this.locatorBuilders.build(container)
+        return locator === 'LOCATOR_DETECTION_FAILED' ? '' : locator
+      })
+    } catch (e) {
+      return undefined
+    }
   }
 
   setWindowHandle(event) {
