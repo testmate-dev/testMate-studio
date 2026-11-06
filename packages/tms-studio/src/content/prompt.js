@@ -86,7 +86,7 @@ function autHasRecorderTracingAttribute() {
 
 function removeRecorderTracingAttribute() {
   if (autHasRecorderTracingAttribute())
-    window.document.body.removeAtrribute('data-side-attach-once-loaded')
+    window.document.body.removeAttribute('data-side-attach-once-loaded')
 }
 
 if (window == window.top) {

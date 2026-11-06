@@ -3,7 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Testmate Recorder</title>
+    <title>Testmate Studio</title>
+    <!-- Paint the studio background before ui.js injects the stylesheet,
+         so the window doesn't flash white while loading -->
+    <style>
+      html,
+      body {
+        background: #f7f5f2;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

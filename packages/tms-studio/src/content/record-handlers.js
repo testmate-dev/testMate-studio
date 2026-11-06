@@ -484,6 +484,10 @@ handlers.push([
   'scroll',
   function(event) {
     if (pageLoaded === true) {
+      // Baseline element count once per scroll burst, not per scroll event
+      if (!scrollDetector) {
+        nowNode = window.document.documentElement.getElementsByTagName('*').length
+      }
       scrollDetector = event.target
       clearTimeout(prevTimeOut)
       prevTimeOut = setTimeout(() => {
@@ -504,11 +508,12 @@ handlers.push([
   'mouseOver',
   'mouseover',
   function(event) {
-    if (window.document.documentElement)
-      nowNode = window.document.documentElement.getElementsByTagName('*').length
     if (pageLoaded === true) {
       let clickable = findClickableElement(event.target)
       if (clickable) {
+        // Counting every element is O(page size); only do it when the count
+        // will be compared, not on every mouseover
+        nowNode = window.document.documentElement.getElementsByTagName('*').length
         nodeInsertedLocator = event.target
         nodeInsertedAttrChange = locatorBuilders.buildAll(event.target)
         setTimeout(() => {
@@ -559,6 +564,9 @@ observers.push([
 observers.push([
   'DOMNodeInserted',
   function(mutations) {
+    // Nothing pending to record: skip the full-page element count, which
+    // would otherwise run on every DOM change of busy pages
+    if (!scrollDetector && !nodeInsertedLocator) return
     if (
       pageLoaded === true &&
       window.document.documentElement.getElementsByTagName('*').length > nowNode

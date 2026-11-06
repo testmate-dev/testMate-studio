@@ -1,6 +1,6 @@
 <template>
   <header>
-    <h1>Testmate Recorder</h1>
+    <h1>Testmate Studio</h1>
     <div class="status">{{ statusText }}</div>
   </header>
 </template>

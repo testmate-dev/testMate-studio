@@ -30,12 +30,63 @@ export default class BackgroundRecorder {
     this.record = record
     this.recordOpensWindow = recordOpensWindow
     this.hasRecorded = hasRecorded
+    this.isRestored = true
+    this.ready = Promise.resolve()
     this.rebind()
+    // Listeners are registered once, synchronously: an MV3 background woken
+    // by an event only receives it if the listener was added at startup.
+    // The handlers ignore events unless a recording is attached.
     if (browser && browser.runtime && browser.runtime.onMessage) {
       browser.runtime.onMessage.addListener(this.attachRecorderRequestHandler)
       browser.runtime.onMessage.addListener(this.setWindowHandleHandler)
       browser.runtime.onMessage.addListener(this.setActiveContext)
+      browser.runtime.onMessage.addListener(this.addCommandMessageHandler)
     }
+    if (browser && browser.tabs && browser.windows && browser.webNavigation) {
+      browser.tabs.onActivated.addListener(this.tabsOnActivatedHandler)
+      browser.windows.onFocusChanged.addListener(this.windowsOnFocusChangedHandler)
+      browser.tabs.onRemoved.addListener(this.tabsOnRemovedHandler)
+      browser.webNavigation.onCreatedNavigationTarget.addListener(
+        this.webNavigationOnCreatedNavigationTargetHandler
+      )
+    }
+  }
+
+  /**
+   * Holds back event handling until the background has restored its saved
+   * state, so events that wake an unloaded background see the recording.
+   *
+   * @param restored promise that settles once state has been restored
+   */
+  waitUntilRestored(restored) {
+    this.isRestored = false
+    const markRestored = () => {
+      this.isRestored = true
+    }
+    this.ready = restored.then(markRestored, markRestored)
+  }
+
+  /**
+   * @returns {Object} the attachment state as plain data
+   */
+  serialize() {
+    return {
+      attached: this.attached,
+      sessionId: this.sessionId,
+      lastAttachedTabId: this.lastAttachedTabId,
+      lastActivatedTabId: this.lastActivatedTabId,
+    }
+  }
+
+  /**
+   * @param state a value previously returned by serialize()
+   */
+  restore(state) {
+    if (!state) return
+    this.attached = !!state.attached
+    this.sessionId = state.sessionId
+    this.lastAttachedTabId = state.lastAttachedTabId
+    this.lastActivatedTabId = state.lastActivatedTabId
   }
 
   async attachToTab(tabId) {
@@ -353,6 +404,7 @@ export default class BackgroundRecorder {
   }
 
   addCommandMessageHandler(message, sender, sendResponse) {
+    if (!this.attached && !this.isAttaching) return
     if (message.frameRemoved) {
       browser.tabs.sendMessage(sender.tab.id, {
         recalculateFrameLocation: true,
@@ -433,7 +485,13 @@ export default class BackgroundRecorder {
       message.target,
       message.value
     )
-    this.record(message.command, message.target, message.value)
+    this.record(
+      message.command,
+      message.target,
+      message.value,
+      message.insertBeforeLastCommand,
+      message.context
+    )
   }
 
   sendRecordNotification(tabId, command, target, value) {
@@ -464,19 +522,40 @@ export default class BackgroundRecorder {
   }
 
   rebind() {
-    this.tabsOnActivatedHandler = this.tabsOnActivatedHandler.bind(this)
-    this.windowsOnFocusChangedHandler = this.windowsOnFocusChangedHandler.bind(
-      this
+    // Tab and window events: wait for restored state, then only act while
+    // a recording is attached
+    const whileRecording = handler => (...args) =>
+      this.ready.then(() => {
+        if (this.attached || this.isAttaching) return handler.apply(this, args)
+      })
+    // Messages: answered immediately once restored; before that, the reply is
+    // delivered through the returned promise after restoration
+    const afterRestore = (isRelevant, handler) => (message, sender, sendResponse) => {
+      if (!message || !isRelevant(message)) return
+      if (this.isRestored) return handler.call(this, message, sender, sendResponse)
+      return this.ready.then(
+        () =>
+          new Promise(resolve => {
+            const result = handler.call(this, message, sender, resolve)
+            if (result !== true) resolve(result)
+          })
+      )
+    }
+    this.tabsOnActivatedHandler = whileRecording(this.tabsOnActivatedHandler)
+    this.windowsOnFocusChangedHandler = whileRecording(this.windowsOnFocusChangedHandler)
+    this.tabsOnRemovedHandler = whileRecording(this.tabsOnRemovedHandler)
+    this.webNavigationOnCreatedNavigationTargetHandler = whileRecording(
+      this.webNavigationOnCreatedNavigationTargetHandler
     )
-    this.tabsOnRemovedHandler = this.tabsOnRemovedHandler.bind(this)
-    this.webNavigationOnCreatedNavigationTargetHandler = this.webNavigationOnCreatedNavigationTargetHandler.bind(
-      this
+    this.setWindowHandleHandler = afterRestore(m => m.setWindowHandle, this.setWindowHandleHandler)
+    this.setActiveContext = afterRestore(m => m.setActiveContext, this.setActiveContext)
+    this.addCommandMessageHandler = afterRestore(
+      m => m.command || m.frameRemoved,
+      this.addCommandMessageHandler
     )
-    this.setWindowHandleHandler = this.setWindowHandleHandler.bind(this)
-    this.setActiveContext = this.setActiveContext.bind(this)
-    this.addCommandMessageHandler = this.addCommandMessageHandler.bind(this)
-    this.attachRecorderRequestHandler = this.attachRecorderRequestHandler.bind(
-      this
+    this.attachRecorderRequestHandler = afterRestore(
+      m => m.attachRecorderRequest,
+      this.attachRecorderRequestHandler
     )
   }
 
@@ -487,16 +566,6 @@ export default class BackgroundRecorder {
     try {
       this.isAttaching = true
       this.sessionId = sessionId
-      browser.tabs.onActivated.addListener(this.tabsOnActivatedHandler)
-      browser.windows.onFocusChanged.addListener(
-        this.windowsOnFocusChangedHandler
-      )
-      browser.tabs.onRemoved.addListener(this.tabsOnRemovedHandler)
-      browser.webNavigation.onCreatedNavigationTarget.addListener(
-        this.webNavigationOnCreatedNavigationTargetHandler
-      )
-      browser.runtime.onMessage.addListener(this.addCommandMessageHandler)
-
       await this.attachToExistingRecording()
 
       this.attached = true
@@ -514,16 +583,6 @@ export default class BackgroundRecorder {
     try {
       this.isAttaching = true
       this.sessionId = sessionId
-      browser.tabs.onActivated.addListener(this.tabsOnActivatedHandler)
-      browser.windows.onFocusChanged.addListener(
-        this.windowsOnFocusChangedHandler
-      )
-      browser.tabs.onRemoved.addListener(this.tabsOnRemovedHandler)
-      browser.webNavigation.onCreatedNavigationTarget.addListener(
-        this.webNavigationOnCreatedNavigationTargetHandler
-      )
-      browser.runtime.onMessage.addListener(this.addCommandMessageHandler)
-
       this.lastAttachedTabId = tab.id
       this.initSession(tab, sessionId)
       this.windowSession.openedTabCount[sessionId] = 1
@@ -544,15 +603,6 @@ export default class BackgroundRecorder {
     await this.detachFromTab(this.lastAttachedTabId)
     this.lastAttachedTabId = undefined
     this.attached = false
-    browser.tabs.onActivated.removeListener(this.tabsOnActivatedHandler)
-    browser.windows.onFocusChanged.removeListener(
-      this.windowsOnFocusChangedHandler
-    )
-    browser.tabs.onRemoved.removeListener(this.tabsOnRemovedHandler)
-    browser.webNavigation.onCreatedNavigationTarget.removeListener(
-      this.webNavigationOnCreatedNavigationTargetHandler
-    )
-    browser.runtime.onMessage.removeListener(this.addCommandMessageHandler)
   }
 
   // this will attempt to connect to a previous recording

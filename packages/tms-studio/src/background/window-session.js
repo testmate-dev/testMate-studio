@@ -38,6 +38,34 @@ export default class WindowSession {
     this.generalUseLastPlayedTestCaseId = undefined
   }
 
+  /**
+   * The recording bookkeeping as plain data, so it can be saved and restored
+   * when an MV3 background (Chrome's service worker, Firefox's event page) is
+   * unloaded while idle. Playback-only state is not included.
+   *
+   * @returns {Object}
+   */
+  serialize() {
+    return {
+      openedTabIds: this.openedTabIds,
+      openedTabCount: this.openedTabCount,
+      openedWindowIds: this.openedWindowIds,
+      currentUsedTabId: this.currentUsedTabId,
+      currentUsedWindowId: this.currentUsedWindowId,
+      currentUsedFrameLocation: this.currentUsedFrameLocation,
+    }
+  }
+
+  /**
+   * @param state a value previously returned by serialize()
+   */
+  restore(state) {
+    if (!state) return
+    Object.keys(this.serialize()).forEach(key => {
+      if (state[key] && typeof state[key] === 'object') this[key] = state[key]
+    })
+  }
+
   // set window as opened in the session
   setOpenedWindow(windowId) {
     this.openedWindowIds[windowId] = true

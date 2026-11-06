@@ -27,6 +27,18 @@
       @click="$emit('cut-selected')"
       v-html="icons.scissors"
     ></button>
+    <!-- Tooltip lives on the wrapper so it shows while the button is disabled -->
+    <span class="bulk-function-wrap" :hidden="!hasSelectedSteps" :title="createFunctionTitle">
+      <button
+        class="bulk-icon-btn bulk-function"
+        type="button"
+        :disabled="!canCreateFunction"
+        aria-label="Create function from selected"
+        @click="$emit('create-function')"
+      >
+        <span class="fx-label">f(x)</span>
+      </button>
+    </span>
     <button
       class="bulk-icon-btn bulk-paste"
       :class="{ active: isPasteMode }"
@@ -49,10 +61,12 @@
 
 <script>
 export default {
-  emits: ['delete-selected', 'copy-selected', 'cut-selected', 'paste-click', 'hide'],
+  emits: ['delete-selected', 'copy-selected', 'cut-selected', 'create-function', 'paste-click', 'hide'],
   props: {
     showBulkBar: { type: Boolean, required: true },
     hasSelectedSteps: { type: Boolean, required: true },
+    canCreateFunction: { type: Boolean, required: true },
+    createFunctionTitle: { type: String, required: true },
     copiedStepsCount: { type: Number, required: true },
     isPasteMode: { type: Boolean, required: true },
     icons: { type: Object, required: true },
