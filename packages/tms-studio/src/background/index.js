@@ -20,6 +20,8 @@ import browser from 'webextension-polyfill'
 import BackgroundRecorder from './recorder'
 import WindowSession from './window-session'
 import { select, cancelSelect } from './select'
+import SuggestionEngine from './suggestion-engine'
+import { isFunctionItem, migrateLegacyFunctions } from '../common/function-model'
 import { UI_WINDOW_SIZE_KEY, windowSizeToOpen } from '../common/ui-window'
 
 const STORAGE_KEY = 'tms:studioState'
@@ -28,6 +30,9 @@ let socket = null
 let socketListenersReady = false
 const windowSession = new WindowSession()
 const recordedSteps = []
+// The recording's function library (definitions that recorded items call)
+const functionLibrary = []
+const suggestions = new SuggestionEngine()
 let activeSessionId = null
 let isRecording = false
 let isPaused = false
@@ -86,6 +91,8 @@ function getSocket() {
 
 const snapshotState = () => ({
   recordedSteps: recordedSteps.slice(),
+  functions: functionLibrary.slice(),
+  suggestions: suggestions.serialize(),
   activeSessionId,
   isPaused,
   isRecording,
@@ -107,7 +114,8 @@ async function syncSessionState() {
   }
 }
 
-// Local storage keeps a paused recording across browser restarts.
+// Local storage keeps the recording across browser restarts until it is
+// cleared with the Clear button (or a new recording starts).
 async function persistState() {
   try {
     await browser.storage.local.set({ [STORAGE_KEY]: snapshotState() })
@@ -152,7 +160,13 @@ async function restoreState() {
     if (!saved || !Array.isArray(saved.recordedSteps)) return
 
     // Steps recorded while restore was in flight came after the saved ones
-    recordedSteps.unshift(...saved.recordedSteps)
+    const migrated = migrateLegacyFunctions(
+      saved.recordedSteps,
+      Array.isArray(saved.functions) ? saved.functions : []
+    )
+    recordedSteps.unshift(...migrated.items)
+    functionLibrary.unshift(...migrated.functions)
+    suggestions.restore(saved.suggestions)
     activeSessionId = saved.activeSessionId || null
     isPaused = saved.isPaused || false
     isRecording = saved.isRecording || false
@@ -200,6 +214,7 @@ const record = (command, target, value, insertBeforeLastCommand, context) => {
   recordedSteps.push(
     sanitizedContext ? { ...payload.payload, context: sanitizedContext } : payload.payload
   )
+  suggestions.afterRecord(recordedSteps, functionLibrary)
   syncSessionState()
   notifyUiUpdate('record')
   if (getSocket() && getSocket().readyState === 'open') {
@@ -430,7 +445,7 @@ const startRecording = async (url, sessionIdOverride, options = {}) => {
   globalThis.hasRecorded = false
   // Each recording starts fresh; functions are scoped to the current
   // recording until the WebUI provides a project function library
-  recordedSteps.length = 0
+  resetRecording()
   // attachWithTab is a no-op while still attached, which would leave the new
   // window unregistered and its lines ignored
   if (globalThis.recorder.attached) await globalThis.recorder.detach()
@@ -473,10 +488,18 @@ const status = () => ({
 const steps = () => ({
   ok: true,
   steps: recordedSteps.slice(),
+  functions: functionLibrary.slice(),
+  suggestion: suggestions.suggestion,
 })
 
-const clear = () => {
+const resetRecording = () => {
   recordedSteps.length = 0
+  functionLibrary.length = 0
+  suggestions.reset()
+}
+
+const clear = () => {
+  resetRecording()
   clearSavedState()
   notifyUiUpdate('clear')
   return { ok: true }
@@ -490,6 +513,7 @@ const CONTEXT_STRING_FIELDS = [
   'step',
   'groupKey',
   'groupLabel',
+  'groupKind',
 ]
 
 /**
@@ -526,47 +550,125 @@ const sanitizeParameter = parameter => {
   if (!parameter || typeof parameter.name !== 'string') return null
   const sanitized = { name: parameter.name }
   if (typeof parameter.type === 'string' && parameter.type) sanitized.type = parameter.type
-  if (typeof parameter.value === 'string') sanitized.value = parameter.value
+  return sanitized
+}
+
+const sanitizeArguments = args => {
+  const sanitized = {}
+  if (!args || typeof args !== 'object') return sanitized
+  Object.keys(args).forEach(name => {
+    if (typeof args[name] === 'string') sanitized[name] = args[name]
+  })
   return sanitized
 }
 
 /**
- * Normalizes a recorder item: either a plain step or a recorder-only function
- * group of the form { type: 'function', id, name, parameters, collapsed, steps }.
+ * Normalizes a recording item: either a recorded line or a call to a
+ * function in the library, { type: 'function', id, functionId, collapsed,
+ * arguments }.
  *
  * @param item the item received from the UI
  * @returns {Object|null} the sanitized item, or null if it is invalid
  */
 const sanitizeItem = item => {
-  if (!item || item.type !== 'function') return sanitizeStep(item)
-  if (typeof item.id !== 'string' || typeof item.name !== 'string') return null
-  const parameters = Array.isArray(item.parameters) ? item.parameters : []
-  const steps = Array.isArray(item.steps) ? item.steps : []
+  if (!isFunctionItem(item)) return sanitizeStep(item)
+  if (typeof item.id !== 'string' || typeof item.functionId !== 'string') return null
   return {
     type: 'function',
     id: item.id,
-    name: item.name,
-    parameters: parameters.map(sanitizeParameter).filter(Boolean),
+    functionId: item.functionId,
     collapsed: !!item.collapsed,
-    steps: steps.map(sanitizeStep).filter(Boolean),
+    arguments: sanitizeArguments(item.arguments),
   }
 }
 
-const replaceSteps = nextSteps => {
+/**
+ * Normalizes a function definition: { id, name, description, parameters,
+ * steps }, whose steps may call other functions.
+ *
+ * @param fn the definition received from the UI
+ * @returns {Object|null}
+ */
+const sanitizeFunction = fn => {
+  if (!fn || typeof fn.id !== 'string' || typeof fn.name !== 'string') return null
+  return {
+    id: fn.id,
+    name: fn.name,
+    description: typeof fn.description === 'string' ? fn.description : '',
+    parameters: (Array.isArray(fn.parameters) ? fn.parameters : [])
+      .map(sanitizeParameter)
+      .filter(Boolean),
+    steps: (Array.isArray(fn.steps) ? fn.steps : []).map(sanitizeItem).filter(Boolean),
+  }
+}
+
+const replaceSteps = (nextSteps, nextFunctions) => {
   if (!Array.isArray(nextSteps)) {
     return { ok: false, error: 'Steps payload must be an array.' }
   }
+  // Older UIs send function groups that hold their own lines
+  const migrated = migrateLegacyFunctions(
+    nextSteps,
+    Array.isArray(nextFunctions) ? nextFunctions : functionLibrary
+  )
+  const library = migrated.functions.map(sanitizeFunction).filter(Boolean)
+  functionLibrary.length = 0
+  functionLibrary.push(...library)
   recordedSteps.length = 0
-  nextSteps.forEach(item => {
+  migrated.items.forEach(item => {
     const sanitized = sanitizeItem(item)
     if (sanitized) recordedSteps.push(sanitized)
   })
+  suggestions.afterReplace(recordedSteps, functionLibrary)
   persistState()
   notifyUiUpdate('replaceSteps')
-  return {
-    ok: true,
-    steps: recordedSteps.slice(),
+  return { ok: true, ...steps() }
+}
+
+const resolveSuggestion = (id, outcome) => {
+  if (suggestions.resolve(id, outcome)) {
+    syncSessionState()
+    notifyUiUpdate('suggestion')
   }
+  return { ok: true }
+}
+
+// === Form commits (TMD-11) ===
+
+// Lets the commit's own click/Enter line arrive before the run is examined
+const COMMIT_SETTLE_MS = 300
+
+const onFormCommit = (tabId, trigger, groupKey) => {
+  stateRestored.then(() => {
+    if (!isRecording || isPaused) return
+    if (!globalThis.recorder.doesTabBelongToRecording(tabId)) return
+    setTimeout(() => {
+      if (!isRecording || isPaused) return
+      if (suggestions.afterCommit(recordedSteps, functionLibrary, { trigger, groupKey })) {
+        syncSessionState()
+        notifyUiUpdate('suggestion')
+      }
+    }, COMMIT_SETTLE_MS)
+  })
+}
+
+// Registered synchronously so a navigation can wake the background
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (!message || !message.formCommit || !sender || !sender.tab) return
+  onFormCommit(
+    sender.tab.id,
+    message.trigger,
+    typeof message.groupKey === 'string' ? message.groupKey : undefined
+  )
+})
+
+const onNavigation = details => {
+  if (details.frameId !== 0 || details.transitionType === 'reload') return
+  onFormCommit(details.tabId, 'navigation')
+}
+if (browser.webNavigation) {
+  browser.webNavigation.onCommitted.addListener(onNavigation)
+  browser.webNavigation.onHistoryStateUpdated.addListener(onNavigation)
 }
 
 const openUiWindow = async () => {
@@ -658,7 +760,10 @@ const handleStudioMessage = message => {
     return Promise.resolve(clear())
   }
   if (message.tmsStudio === 'replaceSteps') {
-    return Promise.resolve(replaceSteps(message.steps))
+    return Promise.resolve(replaceSteps(message.steps, message.functions))
+  }
+  if (message.tmsStudio === 'resolveSuggestion') {
+    return Promise.resolve(resolveSuggestion(message.id, message.outcome))
   }
   if (message.tmsStudio === 'clearSiteData') {
     return clearSiteData(message.url)
@@ -675,4 +780,5 @@ globalThis.tmsApi = {
   clear,
   clearSiteData,
   replaceSteps,
+  resolveSuggestion,
 }

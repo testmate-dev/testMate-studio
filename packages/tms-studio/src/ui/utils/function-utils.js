@@ -15,6 +15,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import {
+  createId,
+  escapeParameterReferences,
+  isFunctionItem,
+  mapItemValues,
+  parseParameterReferences,
+  replaceParameterReferences,
+} from '../../common/function-model'
+
+export {
+  escapeParameterReferences,
+  isFunctionItem,
+  replaceParameterReferences,
+} from '../../common/function-model'
+
 // No `$`: parameters are referenced PHP-style as `$name` / `{$name}` in line
 // values, so a `$` inside a name would be ambiguous
 const IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -37,14 +52,6 @@ export const PARAMETER_TYPES = [
 ]
 
 /**
- * @param item a recorder item
- * @returns {boolean} whether the item is a function group
- */
-export function isFunctionItem(item) {
-  return !!item && item.type === 'function'
-}
-
-/**
  * @param name a function or parameter name
  * @returns {boolean} whether the name is a valid identifier
  */
@@ -62,14 +69,21 @@ export function isValidParameterName(name) {
 }
 
 /**
- * Creates a unique ID for a function group.
+ * Creates a unique ID for a function definition.
  *
  * @returns {string}
  */
 export function createFunctionId() {
-  return `fn-${Date.now().toString(36)}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}`
+  return createId('fn')
+}
+
+/**
+ * Creates a unique ID for a function call.
+ *
+ * @returns {string}
+ */
+export function createCallId() {
+  return createId('call')
 }
 
 const MAX_SIGNATURE_VALUE_LENGTH = 20
@@ -80,71 +94,25 @@ const formatSignatureValue = value =>
     : value
 
 /**
- * Formats a function group's signature, omitting types for untyped
- * parameters and showing values where set, e.g.
- * `login(username: string = bob, remember)`.
+ * Formats a function's signature, omitting types for untyped parameters and
+ * showing values where set, e.g. `login(username: string = bob, remember)`.
  *
- * @param fn the function group
+ * @param fn the function definition
+ * @param args the call's arguments (by parameter name); defaults to values
+ * stored on the parameters
  * @returns {string}
  */
-export function formatSignature(fn) {
+export function formatSignature(fn, args) {
   const parameters = (fn.parameters || [])
     .map(p => {
       const declaration = p.type ? `${p.name}: ${p.type}` : p.name
-      return typeof p.value === 'string' && p.value
-        ? `${declaration} = ${formatSignatureValue(p.value)}`
+      const value = args ? args[p.name] : p.value
+      return typeof value === 'string' && value
+        ? `${declaration} = ${formatSignatureValue(value)}`
         : declaration
     })
     .join(', ')
   return `${fn.name}(${parameters})`
-}
-
-/**
- * Replaces PHP-style parameter references (`$name`) in a line value. Only
- * declared names are references, the longest declared name wins
- * (`$user-admin` is `user-admin` if declared, else `user` + `-admin`), and
- * `\$` is a literal dollar sign that is left as written.
- *
- * @param text the line value
- * @param names declared parameter names
- * @param replacer called with each referenced name; returns the replacement,
- * or null/undefined to keep the reference as is
- * @returns {string}
- */
-export function replaceParameterReferences(text, names, replacer) {
-  if (typeof text !== 'string' || !names.length) return text
-  const longestFirst = [...names].sort((a, b) => b.length - a.length)
-  let result = ''
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] === '\\' && text[i + 1] === '$') {
-      result += '\\$'
-      i++
-      continue
-    }
-    if (text[i] === '$') {
-      const name = longestFirst.find(candidate => text.startsWith(candidate, i + 1))
-      if (name) {
-        const replacement = replacer(name)
-        result += replacement == null ? `$${name}` : replacement
-        i += name.length
-        continue
-      }
-    }
-    result += text[i]
-  }
-  return result
-}
-
-/**
- * Escapes references to the given parameters so literal text such as a
- * typed "$email" is not later read as the `email` parameter.
- *
- * @param text the line value
- * @param names declared parameter names
- * @returns {string}
- */
-export function escapeParameterReferences(text, names) {
-  return replaceParameterReferences(text, names, name => `\\$${name}`)
 }
 
 // Commands whose value the user typed or selected, and so may vary per use
@@ -235,15 +203,41 @@ export function suggestParameterType(context = {}) {
 /**
  * Suggests one parameter for each line with a typed or selected value,
  * named from the field (autocomplete, name/id, label, then locator) and
- * typed from its input type. Names are unique within the suggestions.
+ * typed from its input type, and one for each argument of a nested function
+ * call, named and typed like the called function's parameter. Names are
+ * unique within the suggestions.
  *
- * @param steps the lines that will form the function
- * @returns {Array<{stepIndex: number, name: string, type: string, value: string, prefix: string}>}
+ * @param steps the items that will form the function
+ * @param functionsById definitions by ID, for nested calls
+ * @returns {Array<{stepIndex: number, name: string, type: string, value: string, prefix: string, argument?: string}>}
  */
-export function suggestParameters(steps) {
+export function suggestParameters(steps, functionsById = new Map()) {
   const used = new Set()
   const suggestions = []
+  const uniqueName = base => {
+    let name = base
+    for (let n = 2; used.has(name); n++) name = `${base}${n}`
+    used.add(name)
+    return name
+  }
   steps.forEach((step, stepIndex) => {
+    if (isFunctionItem(step)) {
+      const fn = functionsById.get(step.functionId)
+      const args = step.arguments || {}
+      ;((fn && fn.parameters) || []).forEach(parameter => {
+        const value = args[parameter.name]
+        if (typeof value !== 'string' || !value) return
+        suggestions.push({
+          stepIndex,
+          argument: parameter.name,
+          name: uniqueName(parameter.name),
+          type: parameter.type || 'string',
+          value,
+          prefix: '',
+        })
+      })
+      return
+    }
     if (!PARAMETERIZABLE_COMMANDS.includes(step.command)) return
     const { prefix, value } = splitParameterizableValue(step.command, step.value)
     if (!value) return
@@ -255,35 +249,50 @@ export function suggestParameters(steps) {
         toParameterName((context.label || '').toLowerCase()),
         locatorName(step.target),
       ].find(Boolean) || 'value'
-    let name = base
-    for (let n = 2; used.has(name); n++) name = `${base}${n}`
-    used.add(name)
-    suggestions.push({ stepIndex, name, type: suggestParameterType(context), value, prefix })
+    suggestions.push({
+      stepIndex,
+      name: uniqueName(base),
+      type: suggestParameterType(context),
+      value,
+      prefix,
+    })
   })
   return suggestions
 }
 
 /**
- * Builds a function's lines and parameters from the selected lines and the
+ * Builds a function's steps and parameters from the selected items and the
  * parameters confirmed in the modal. Linked parameters replace their line's
- * value with `$name` and take the recorded value as their value; other `$`
- * text matching a declared name is escaped so it stays literal.
+ * value (or a nested call's argument) with `$name` and take the recorded
+ * value as their value; other `$` text matching a declared name is escaped
+ * so it stays literal.
  *
- * @param steps the selected lines
+ * @param steps the selected items
  * @param parameters confirmed parameters, each optionally with
- * `link: {stepIndex, prefix, value}`
+ * `link: {stepIndex, prefix, value, argument?}`
  * @returns {{steps: Object[], parameters: Array<{name: string, type?: string, value?: string}>}}
  */
 export function linkParameters(steps, parameters) {
   const names = parameters.map(p => p.name)
-  const linkedSteps = new Map()
+  const links = new Map()
   const resultParameters = parameters.map(({ link, ...parameter }) => {
     if (!link) return parameter
-    linkedSteps.set(link.stepIndex, `${link.prefix}$${parameter.name}`)
+    const key = link.argument ? `${link.stepIndex}:${link.argument}` : `${link.stepIndex}`
+    links.set(key, `${link.prefix || ''}$${parameter.name}`)
     return { ...parameter, value: link.value }
   })
   const resultSteps = steps.map((step, index) => {
-    if (linkedSteps.has(index)) return { ...step, value: linkedSteps.get(index) }
+    if (isFunctionItem(step)) {
+      const args = {}
+      Object.keys(step.arguments || {}).forEach(argument => {
+        const key = `${index}:${argument}`
+        args[argument] = links.has(key)
+          ? links.get(key)
+          : escapeParameterReferences(step.arguments[argument], names)
+      })
+      return { ...step, arguments: args }
+    }
+    if (links.has(`${index}`)) return { ...step, value: links.get(`${index}`) }
     return { ...step, value: escapeParameterReferences(step.value, names) }
   })
   return { steps: resultSteps, parameters: resultParameters }
@@ -319,10 +328,11 @@ export function applyParameterEdits(steps, previous, next) {
     }
     return null
   }
-  const resultSteps = steps.map(step => ({
-    ...step,
-    value: replaceParameterReferences(step.value, [...previousNames, ...newNames], replacer),
-  }))
+  const resultSteps = steps.map(step =>
+    mapItemValues(step, value =>
+      replaceParameterReferences(value, [...previousNames, ...newNames], replacer)
+    )
+  )
   const resultParameters = next.map(({ originalName, ...parameter }) => {
     const before = previous.find(p => p.name === originalName)
     return before && typeof before.value === 'string'
@@ -371,5 +381,108 @@ export function validateFunctionDraft(draft) {
     return result
   })
 
-  return { errors, value: { name, parameters } }
+  const value = { name, parameters }
+  if (typeof draft.description === 'string') value.description = draft.description.trim()
+  return { errors, value }
+}
+
+const referencedNames = (steps, names) => {
+  const found = new Set()
+  steps.forEach(step => {
+    const values = isFunctionItem(step) ? Object.values(step.arguments || {}) : [step.value]
+    values.forEach(value =>
+      parseParameterReferences(value, names).forEach(segment => {
+        if (segment.ref) found.add(segment.ref)
+      })
+    )
+  })
+  return found
+}
+
+const updateCalls = (items, functionId, update) =>
+  items.map(item => (isFunctionItem(item) && item.functionId === functionId ? update(item) : item))
+
+/**
+ * Applies an edit of a function definition everywhere it is used. Renamed
+ * parameters update the definition's `$references` and every call's
+ * arguments. A removed parameter that the definition's steps use is replaced
+ * by its value, which every call must agree on (and no other function may
+ * pass it on), since the definition is shared by all calls.
+ *
+ * @param state {{items: Object[], functions: Object[], copied: Object[]}}
+ * @param functionId the edited definition
+ * @param edit {{name: string, description?: string, parameters: Array<{name: string, type?: string, originalName?: string}>}}
+ * @returns {{error: string}|{items: Object[], functions: Object[], copied: Object[]}}
+ */
+export function editFunctionDefinition(state, functionId, edit) {
+  const fn = state.functions.find(f => f.id === functionId)
+  if (!fn) return { error: 'Function not found.' }
+  const renames = new Map()
+  edit.parameters.forEach(p => {
+    if (p.originalName) renames.set(p.originalName, p.name)
+  })
+  const removed = fn.parameters.filter(p => !renames.has(p.name)).map(p => p.name)
+  const used = referencedNames(fn.steps, fn.parameters.map(p => p.name))
+
+  const callsOf = items =>
+    items.filter(item => isFunctionItem(item) && item.functionId === functionId)
+  const topLevelCalls = [...callsOf(state.items), ...callsOf(state.copied)]
+  const nested = state.functions.filter(other => callsOf(other.steps).length > 0)
+
+  const previous = []
+  for (const parameter of fn.parameters) {
+    if (!removed.includes(parameter.name) || !used.has(parameter.name)) {
+      previous.push(parameter)
+      continue
+    }
+    const passedOn = nested.find(other =>
+      callsOf(other.steps).some(call => (call.arguments || {})[parameter.name])
+    )
+    if (passedOn) {
+      return {
+        error: `Parameter "${parameter.name}" can't be removed: ${passedOn.name} passes it a value.`,
+      }
+    }
+    const values = Array.from(
+      new Set(
+        topLevelCalls
+          .map(call => (call.arguments || {})[parameter.name])
+          .filter(value => typeof value === 'string')
+      )
+    )
+    if (values.length > 1) {
+      return {
+        error: `Parameter "${parameter.name}" can't be removed: its uses give it different values.`,
+      }
+    }
+    previous.push(values.length ? { ...parameter, value: values[0] } : parameter)
+  }
+
+  const edited = applyParameterEdits(fn.steps, previous, edit.parameters)
+  const updateCall = call => {
+    const args = {}
+    Object.keys(call.arguments || {}).forEach(name => {
+      if (removed.includes(name)) return
+      args[renames.get(name) || name] = call.arguments[name]
+    })
+    return { ...call, arguments: args }
+  }
+  const functions = state.functions.map(other => {
+    if (other.id === functionId) {
+      return {
+        ...other,
+        name: edit.name,
+        description:
+          typeof edit.description === 'string' ? edit.description : other.description || '',
+        parameters: edited.parameters.map(({ value, ...parameter }) => parameter),
+        steps: updateCalls(edited.steps, functionId, updateCall),
+      }
+    }
+    return { ...other, steps: updateCalls(other.steps, functionId, updateCall) }
+  })
+  return {
+    items: updateCalls(state.items, functionId, updateCall),
+    functions,
+    copied: updateCalls(state.copied, functionId, updateCall),
+  }
 }

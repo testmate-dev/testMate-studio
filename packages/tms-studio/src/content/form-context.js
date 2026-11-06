@@ -100,6 +100,20 @@ export function getGroupContainer(element) {
   return null
 }
 
+/**
+ * @param container an element from getGroupContainer
+ * @returns {string} 'form', 'fieldset', 'dialog' or 'container' (any other
+ * element that holds fields and a button)
+ */
+export function getGroupKind(container) {
+  const tagName = container.tagName.toLowerCase()
+  const role = (container.getAttribute('role') || '').toLowerCase()
+  if (tagName === 'form' || role === 'form' || role === 'search') return 'form'
+  if (tagName === 'fieldset') return 'fieldset'
+  if (tagName === 'dialog' || role === 'dialog') return 'dialog'
+  return 'container'
+}
+
 const getGroupLabel = container => {
   const ariaLabel = cleanText(container.getAttribute('aria-label'))
   if (ariaLabel) return ariaLabel
@@ -138,9 +152,107 @@ export function getFieldContext(element, buildLocator) {
       // groupKey is optional
     }
     context.groupLabel = getGroupLabel(container)
+    context.groupKind = getGroupKind(container)
   }
   Object.keys(context).forEach(key => {
     if (context[key] === '' || context[key] === undefined) delete context[key]
   })
   return context
+}
+
+// Delay before checking whether tracked fields are gone, so a page that is
+// mid-update is not mistaken for a closed form
+const REMOVAL_CHECK_DELAY_MS = 250
+const MAX_TRACKED_FIELDS = 50
+
+const isGone = element => !element.isConnected || element.getClientRects().length === 0
+
+/**
+ * Reports when a form the user filled in is committed (TMD-11): it is
+ * submitted, or all the fields recorded in it disappear (e.g. a dialog
+ * closes or a single-page app swaps the view). URL changes are seen by the
+ * background itself.
+ */
+export class FormCommitWatcher {
+  /**
+   * @param window the page's window
+   * @param report called with ({trigger, groupKey})
+   * @param buildLocator function returning a locator string for an element
+   */
+  constructor(window, report, buildLocator) {
+    this.window = window
+    this.report = report
+    this.buildLocator = buildLocator
+    this.fields = new Map() // groupKey -> Set<Element>
+    this.timer = null
+    this.observer = null
+    this.onSubmit = this.onSubmit.bind(this)
+    this.onMutation = this.onMutation.bind(this)
+  }
+
+  attach() {
+    this.window.document.addEventListener('submit', this.onSubmit, true)
+    this.observer = new MutationObserver(this.onMutation)
+    this.observer.observe(this.window.document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['style', 'class', 'hidden', 'open'],
+    })
+  }
+
+  detach() {
+    this.window.document.removeEventListener('submit', this.onSubmit, true)
+    if (this.observer) this.observer.disconnect()
+    this.observer = null
+    clearTimeout(this.timer)
+    this.timer = null
+    this.fields.clear()
+  }
+
+  /**
+   * Remembers a field a line was recorded on.
+   *
+   * @param element the field
+   * @param context its field context
+   */
+  track(element, context) {
+    if (!context || !context.isFillable || !context.groupKey) return
+    let size = 0
+    this.fields.forEach(set => (size += set.size))
+    if (size >= MAX_TRACKED_FIELDS) return
+    if (!this.fields.has(context.groupKey)) this.fields.set(context.groupKey, new Set())
+    this.fields.get(context.groupKey).add(element)
+  }
+
+  onSubmit(event) {
+    const form = event.target
+    let groupKey
+    try {
+      groupKey = this.buildLocator(form) || undefined
+    } catch (e) {
+      // the background falls back to the last filled form
+    }
+    if (groupKey) this.fields.delete(groupKey)
+    this.report({ trigger: 'submit', groupKey })
+  }
+
+  // Throttled rather than debounced, so constantly animating pages still
+  // get checked
+  onMutation() {
+    if (this.fields.size === 0 || this.timer) return
+    this.timer = setTimeout(() => {
+      this.timer = null
+      this.checkRemoved()
+    }, REMOVAL_CHECK_DELAY_MS)
+  }
+
+  checkRemoved() {
+    this.fields.forEach((elements, groupKey) => {
+      if (Array.from(elements).every(isGone)) {
+        this.fields.delete(groupKey)
+        this.report({ trigger: 'removed', groupKey })
+      }
+    })
+  }
 }

@@ -216,6 +216,70 @@ selecting=null;}}async function disableSelect(){await webextension_polyfill__WEB
 
 /***/ },
 
+/***/ "./background/suggestion-engine.js"
+/*!*****************************************!*\
+  !*** ./background/suggestion-engine.js ***!
+  \*****************************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "default": () => (/* binding */ SuggestionEngine)
+/* harmony export */ });
+/* harmony import */ var _common_function_model__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ../common/function-model */ "./common/function-model.js");
+/* harmony import */ var _common_form_detection__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ../common/form-detection */ "./common/form-detection.js");
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+/**
+ * Decides which "turn these lines into a function" suggestion the studio
+ * shows. There is at most one at a time:
+ * - `form` (TMD-11): a form was filled in and committed
+ * - `match` (TMD-12): the latest lines are another use of an existing function
+ * - `wrap` (TMD-12): the same functions keep being called in the same order
+ *
+ * Dismissed suggestions are not offered again in this recording. Everything
+ * is scoped to the current recording.
+ */class SuggestionEngine{constructor(){this.reset();}reset(){this.suggestion=null;this.dismissed=new Set();}serialize(){return{suggestion:this.suggestion,dismissed:Array.from(this.dismissed)};}restore(state){if(!state)return;this.suggestion=state.suggestion||null;this.dismissed=new Set(Array.isArray(state.dismissed)?state.dismissed:[]);}/**
+   * After a line is recorded: offer to replace the latest lines with an
+   * existing function they match.
+   *
+   * @returns {boolean} whether the suggestion changed
+   */afterRecord(items,functions){const match=(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.findTrailingMatch)(items,functions);return match?this.offerMatch(items,match):false;}/**
+   * After a form was submitted, the page navigated, or the filled fields
+   * disappeared.
+   *
+   * @param trigger 'submit', 'removed' or 'navigation'
+   * @param groupKey the committed form's group, if known
+   * @returns {boolean} whether the suggestion changed
+   */afterCommit(items,functions,{trigger,groupKey}={}){const run=(0,_common_form_detection__WEBPACK_IMPORTED_MODULE_1__.detectFormRun)(items,{groupKey});if(!run)return false;const match=(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.findRangeMatch)(items,run.start,run.end,functions);if(match)return this.offerMatch(items,match);if(run.fillCount<2||(0,_common_form_detection__WEBPACK_IMPORTED_MODULE_1__.scoreFormRun)(run,trigger)<_common_form_detection__WEBPACK_IMPORTED_MODULE_1__.FORM_SCORE_THRESHOLD)return false;return this.offer(items,{kind:'form',start:run.start,end:run.end,name:(0,_common_form_detection__WEBPACK_IMPORTED_MODULE_1__.suggestFunctionName)(items.slice(run.start,run.end+1),run.groupLabel),groupLabel:run.groupLabel,signature:(0,_common_form_detection__WEBPACK_IMPORTED_MODULE_1__.formRunSignature)(items,run)});}/**
+   * After the lines were edited in the studio: drop a suggestion whose lines
+   * changed, and look for functions that keep being called together.
+   *
+   * @returns {boolean} whether the suggestion changed
+   */afterReplace(items,functions){let changed=false;if(this.suggestion&&!this.isCurrent(items)){this.suggestion=null;changed=true;}if(!this.suggestion){const repeated=(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.findRepeatedCalls)(items,functions,signature=>this.dismissed.has(signature));if(repeated)changed=this.offer(items,{kind:'wrap',...repeated})||changed;}return changed;}/**
+   * @param id the suggestion's ID
+   * @param outcome 'dismissed' (not offered again) or 'accepted'
+   * @returns {boolean} whether the suggestion changed
+   */resolve(id,outcome){if(!this.suggestion||this.suggestion.id!==id)return false;if(outcome==='dismissed')this.dismissed.add(this.suggestion.signature);this.suggestion=null;return true;}isCurrent(items){const{start,end,fingerprint}=this.suggestion;return end<items.length&&(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.fingerprintRange)(items,start,end)===fingerprint;}offerMatch(items,match){return this.offer(items,{kind:'match',...match,// Declining a match declines that function for the rest of the recording
+signature:`match:${match.functionId}`});}offer(items,suggestion){if(this.dismissed.has(suggestion.signature))return false;const current=this.suggestion;if(current&&current.signature===suggestion.signature&&current.start===suggestion.start&&current.end===suggestion.end){return false;}this.suggestion={...suggestion,id:(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.createId)('sg'),fingerprint:(0,_common_function_model__WEBPACK_IMPORTED_MODULE_0__.fingerprintRange)(items,suggestion.start,suggestion.end)};return true;}}
+
+/***/ },
+
 /***/ "./background/window-session.js"
 /*!**************************************!*\
   !*** ./background/window-session.js ***!
@@ -264,6 +328,273 @@ dedicateGeneralUseSession(identifier){this.openedTabIds[identifier]=this.openedT
 async removeSecondaryTabs(identifier){const tabsIds=this.getTabIdsByIdentifier(identifier);const tabs=[];for(let tabId of tabsIds){try{tabs.push(await webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().tabs.get(tabId));}catch(e){// eslint-disable-line no-empty
 }}if(tabs.length){// remove all tabs except the first in the window
 await webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().tabs.remove(tabs.map(tab=>tab.id).slice(1));this.currentUsedTabId[identifier]=tabs[0].id;this.currentUsedFrameLocation[identifier]='root';this.openedTabCount[identifier]=1;this.openedTabIds[identifier]={[tabs[0].id]:'root'};}}async closeAllOpenedWindows(){const windowIds=Object.keys(this.openedWindowIds).map(id=>parseInt(id));for(let windowId of windowIds){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().windows.remove(windowId);}this.openedWindowIds={};}async focusPlayingWindow(){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_0___default().windows.update(this.generalUsePlayingWindowId,{focused:true});}}
+
+/***/ },
+
+/***/ "./common/form-detection.js"
+/*!**********************************!*\
+  !*** ./common/form-detection.js ***!
+  \**********************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   COMMIT_TRIGGER_WEIGHTS: () => (/* binding */ COMMIT_TRIGGER_WEIGHTS),
+/* harmony export */   FILL_COMMANDS: () => (/* binding */ FILL_COMMANDS),
+/* harmony export */   FORM_SCORE_THRESHOLD: () => (/* binding */ FORM_SCORE_THRESHOLD),
+/* harmony export */   detectFormRun: () => (/* binding */ detectFormRun),
+/* harmony export */   formRunSignature: () => (/* binding */ formRunSignature),
+/* harmony export */   isCommitLine: () => (/* binding */ isCommitLine),
+/* harmony export */   scoreFormRun: () => (/* binding */ scoreFormRun),
+/* harmony export */   suggestFunctionName: () => (/* binding */ suggestFunctionName)
+/* harmony export */ });
+/* harmony import */ var _function_model__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./function-model */ "./common/function-model.js");
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+// TMD-11: recognises a run of recorded lines that fill in and commit one form
+// (no DOM; runs in the background on the recorded lines' field context).
+// Commands that put a value into a field
+const FILL_COMMANDS=['type','editContent','select','addSelection','removeSelection','check','uncheck'];const CLICK_COMMANDS=['click','clickAt','doubleClick','doubleClickAt','submit'];// What closed the run, and how strongly that says "form finished"
+const COMMIT_TRIGGER_WEIGHTS={submit:3,removed:2,navigation:2};const STRONG_GROUP_KINDS=['form','fieldset','dialog'];const FORM_SCORE_THRESHOLD=5;const MAX_NAME_LENGTH=40;const contextOf=item=>item&&!(0,_function_model__WEBPACK_IMPORTED_MODULE_0__.isFunctionItem)(item)&&item.context||{};const isFillLine=item=>!(0,_function_model__WEBPACK_IMPORTED_MODULE_0__.isFunctionItem)(item)&&FILL_COMMANDS.includes(item.command)&&contextOf(item).isFillable!==false;/**
+ * @param item a recording item
+ * @returns {boolean} whether the line commits a form: a click on something
+ * other than a field, or Enter
+ */function isCommitLine(item){if(!item||(0,_function_model__WEBPACK_IMPORTED_MODULE_0__.isFunctionItem)(item))return false;if(item.command==='sendKeys'){return typeof item.value==='string'&&item.value.includes('KEY_ENTER');}return CLICK_COMMANDS.includes(item.command)&&contextOf(item).isFillable!==true;}const autocompleteTokens=context=>(context.autocomplete||'').split(/\s+/).filter(token=>token&&token!=='on'&&token!=='off');/**
+ * Finds the run of lines that fill in one form: consecutive top-level lines
+ * sharing a group (form or container), ending with the group's last line and
+ * starting after its previous commit. Lines inside functions never take part.
+ *
+ * @param items recording items
+ * @param options.groupKey the group to look for; by default the group of the
+ * last filled field
+ * @returns {Object|null} the run's range and the signals found in it
+ */function detectFormRun(items,{groupKey}={}){let floor=0;for(let i=items.length-1;i>=0;i--){if((0,_function_model__WEBPACK_IMPORTED_MODULE_0__.isFunctionItem)(items[i])){floor=i+1;break;}}let key=groupKey;if(!key){for(let i=items.length-1;i>=floor&&!key;i--){if(isFillLine(items[i]))key=contextOf(items[i]).groupKey;}}if(!key)return null;let end=-1;for(let i=items.length-1;i>=floor;i--){if(contextOf(items[i]).groupKey===key){end=i;break;}}if(end<0)return null;let start=end;while(start-1>=floor&&contextOf(items[start-1]).groupKey===key&&!isCommitLine(items[start-1])){start--;}const lines=items.slice(start,end+1);const fillLines=lines.filter(isFillLine);const groupContext=contextOf(lines.find(line=>contextOf(line).groupLabel)||lines[0]);return{start,end,groupKey:key,groupKind:groupContext.groupKind||'',groupLabel:groupContext.groupLabel||'',fillCount:fillLines.length,hasPassword:fillLines.some(line=>{const context=contextOf(line);return context.fieldType==='password'||autocompleteTokens(context).some(token=>token.endsWith('password'));}),autocompleteCount:fillLines.filter(line=>autocompleteTokens(contextOf(line)).length>0).length,endsWithCommit:isCommitLine(items[end])};}/**
+ * Scores how likely a run is a reusable form flow. Strong signals: a real
+ * form/dialog, what closed the run, a password field. Medium signals: field
+ * meaning (autocomplete), a commit line, and the number of fields.
+ *
+ * @param run a run from detectFormRun
+ * @param trigger what closed the run: 'submit', 'removed' or 'navigation'
+ * @returns {number}
+ */function scoreFormRun(run,trigger){let score=STRONG_GROUP_KINDS.includes(run.groupKind)?2:1;score+=COMMIT_TRIGGER_WEIGHTS[trigger]||0;if(run.hasPassword)score+=2;score+=Math.min(2,run.autocompleteCount);if(run.endsWithCommit)score+=1;if(run.fillCount>=3)score+=1;return score;}/**
+ * @returns {string} identifies a form run so a dismissed suggestion is not
+ * offered again for the same form
+ */function formRunSignature(items,run){const fields=items.slice(run.start,run.end+1).filter(isFillLine).map(line=>Array.isArray(line.target)&&Array.isArray(line.target[0])?line.target[0][0]:String(line.target)).sort();return`form:${run.groupKey}:${fields.join('|')}`;}const toIdentifier=text=>{const words=String(text||'').replace(/[^A-Za-z0-9]+/g,' ').trim().split(' ').filter(Boolean);if(!words.length)return'';const name=words.map((word,index)=>index===0?word.charAt(0).toLowerCase()+word.slice(1):word.charAt(0).toUpperCase()+word.slice(1)).join('').slice(0,MAX_NAME_LENGTH);return /^[A-Za-z_]/.test(name)?name:`_${name}`;};// Well-known flows, recognised from what the fields mean
+const has=(tokens,...names)=>names.some(name=>tokens.has(name));/**
+ * Suggests a function name for a form run: a well-known flow (login,
+ * sign-up, search, payment, address) from the fields' meaning, otherwise the
+ * form's heading or label, otherwise `fillForm`.
+ *
+ * @param lines the run's lines
+ * @param groupLabel the form's label or heading
+ * @returns {string}
+ */function suggestFunctionName(lines,groupLabel){const tokens=new Set();lines.filter(isFillLine).forEach(line=>{const context=contextOf(line);autocompleteTokens(context).forEach(token=>tokens.add(token));if(context.fieldType)tokens.add(`type:${context.fieldType}`);[context.fieldName,context.label].forEach(text=>{if(text&&/search/i.test(text))tokens.add('search');});});if(has(tokens,'new-password'))return'signUp';if(has(tokens,'current-password','type:password'))return'login';if(has(tokens,'cc-number','cc-exp','cc-csc','cc-name'))return'enterPayment';if(has(tokens,'type:search','search'))return'search';if(has(tokens,'street-address','address-line1','postal-code','address-level2')){return'enterAddress';}return toIdentifier(groupLabel)||'fillForm';}
+
+/***/ },
+
+/***/ "./common/function-model.js"
+/*!**********************************!*\
+  !*** ./common/function-model.js ***!
+  \**********************************/
+(__unused_webpack_module, __webpack_exports__, __webpack_require__) {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   callsFunction: () => (/* binding */ callsFunction),
+/* harmony export */   createId: () => (/* binding */ createId),
+/* harmony export */   escapeParameterReferences: () => (/* binding */ escapeParameterReferences),
+/* harmony export */   expandItems: () => (/* binding */ expandItems),
+/* harmony export */   findOccurrences: () => (/* binding */ findOccurrences),
+/* harmony export */   findRangeMatch: () => (/* binding */ findRangeMatch),
+/* harmony export */   findRepeatedCalls: () => (/* binding */ findRepeatedCalls),
+/* harmony export */   findTrailingMatch: () => (/* binding */ findTrailingMatch),
+/* harmony export */   fingerprintRange: () => (/* binding */ fingerprintRange),
+/* harmony export */   indexFunctions: () => (/* binding */ indexFunctions),
+/* harmony export */   isFunctionItem: () => (/* binding */ isFunctionItem),
+/* harmony export */   mapItemValues: () => (/* binding */ mapItemValues),
+/* harmony export */   matchFunction: () => (/* binding */ matchFunction),
+/* harmony export */   matchSequence: () => (/* binding */ matchSequence),
+/* harmony export */   matchTemplate: () => (/* binding */ matchTemplate),
+/* harmony export */   migrateLegacyFunctions: () => (/* binding */ migrateLegacyFunctions),
+/* harmony export */   parameterNames: () => (/* binding */ parameterNames),
+/* harmony export */   parseParameterReferences: () => (/* binding */ parseParameterReferences),
+/* harmony export */   reachableFunctions: () => (/* binding */ reachableFunctions),
+/* harmony export */   replaceParameterReferences: () => (/* binding */ replaceParameterReferences),
+/* harmony export */   targetsSimilar: () => (/* binding */ targetsSimilar)
+/* harmony export */ });
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+// The studio's function model, shared by the background and the UI (no DOM).
+//
+// A recording is a list of items. Each item is either a recorded line
+// ({command, target, value, ...}) or a call to a function:
+//   { type: 'function', id, functionId, collapsed, arguments: {name: value} }
+// Function definitions live in the recording's function library:
+//   { id, name, description, parameters: [{name, type?}], steps: [item, ...] }
+// A definition's steps may themselves call other functions, whose arguments
+// may reference the outer function's parameters as `$name`.
+const MAX_DEPTH=20;/**
+ * @param item a recording item
+ * @returns {boolean} whether the item is a function call
+ */function isFunctionItem(item){return!!item&&item.type==='function';}/**
+ * Creates a unique ID, e.g. `fn-…` for definitions and `call-…` for calls.
+ *
+ * @param prefix the ID prefix
+ * @returns {string}
+ */function createId(prefix='fn'){return`${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;}/**
+ * @param functions function definitions
+ * @returns {Map<string, Object>} definitions by ID
+ */function indexFunctions(functions){return new Map((functions||[]).map(fn=>[fn.id,fn]));}/**
+ * @param fn a function definition
+ * @returns {string[]} its parameter names
+ */function parameterNames(fn){return(fn&&fn.parameters||[]).map(p=>p.name);}/**
+ * Splits text into literal text and PHP-style parameter references (`$name`).
+ * Only declared names are references, the longest declared name wins
+ * (`$user-admin` is `user-admin` if declared, else `user` + `-admin`), and
+ * `\$` is a literal dollar sign.
+ *
+ * @param text the text to parse
+ * @param names declared parameter names
+ * @returns {Array<{ref: string}|{literal: string, raw: string}>} segments;
+ * literal segments carry the unescaped text and the text as written
+ */function parseParameterReferences(text,names){const source=typeof text==='string'?text:'';const longestFirst=[...names].sort((a,b)=>b.length-a.length);const segments=[];let literal='';let raw='';const flush=()=>{if(raw)segments.push({literal,raw});literal='';raw='';};for(let i=0;i<source.length;i++){if(source[i]==='\\'&&source[i+1]==='$'){literal+='$';raw+='\\$';i++;continue;}if(source[i]==='$'){const name=longestFirst.find(candidate=>source.startsWith(candidate,i+1));if(name){flush();segments.push({ref:name});i+=name.length;continue;}}literal+=source[i];raw+=source[i];}flush();return segments;}/**
+ * Replaces parameter references (`$name`) in text. `\$` is left as written.
+ *
+ * @param text the text
+ * @param names declared parameter names
+ * @param replacer called with each referenced name; returns the replacement,
+ * or null/undefined to keep the reference as is
+ * @returns {string}
+ */function replaceParameterReferences(text,names,replacer){if(typeof text!=='string'||!names.length)return text;return parseParameterReferences(text,names).map(segment=>{if(!segment.ref)return segment.raw;const replacement=replacer(segment.ref);return replacement==null?`$${segment.ref}`:replacement;}).join('');}/**
+ * Escapes references to the given parameters so literal text such as a
+ * typed "$email" is not later read as the `email` parameter.
+ *
+ * @param text the text
+ * @param names declared parameter names
+ * @returns {string}
+ */function escapeParameterReferences(text,names){return replaceParameterReferences(text,names,name=>`\\$${name}`);}/**
+ * Applies a mapping to every value an item holds: a line's value, or each of
+ * a call's arguments.
+ *
+ * @param item a recording item
+ * @param mapper function from a value to its new value
+ * @returns {Object} a new item
+ */function mapItemValues(item,mapper){if(isFunctionItem(item)){const args={};Object.keys(item.arguments||{}).forEach(name=>{args[name]=mapper(item.arguments[name]);});return{...item,arguments:args};}return{...item,value:mapper(item.value)};}/**
+ * Expands items into the recorded lines they stand for, replacing each
+ * call's parameter references with its arguments.
+ *
+ * @param items recording items
+ * @param functionsById definitions by ID
+ * @returns {Object[]} recorded lines
+ */function expandItems(items,functionsById,depth=0){const lines=[];(items||[]).forEach(item=>{if(!isFunctionItem(item)){lines.push(item);return;}const fn=functionsById.get(item.functionId);if(!fn||depth>=MAX_DEPTH)return;const names=parameterNames(fn);const args=item.arguments||{};expandItems(fn.steps,functionsById,depth+1).forEach(line=>{lines.push({...line,value:replaceParameterReferences(line.value,names,name=>typeof args[name]==='string'?args[name]:null)});});});return lines;}/**
+ * @param functions function definitions
+ * @param roots items whose calls are in use
+ * @returns {Object[]} the definitions reachable from the roots, directly or
+ * through other definitions, in library order
+ */function reachableFunctions(functions,roots){const byId=indexFunctions(functions);const used=new Set();const visit=items=>(items||[]).forEach(item=>{if(!isFunctionItem(item)||used.has(item.functionId))return;const fn=byId.get(item.functionId);if(!fn)return;used.add(fn.id);visit(fn.steps);});visit(roots);return(functions||[]).filter(fn=>used.has(fn.id));}/**
+ * @param fn a function definition
+ * @param targetId a definition ID
+ * @param functionsById definitions by ID
+ * @returns {boolean} whether fn calls targetId, directly or indirectly
+ */function callsFunction(fn,targetId,functionsById,depth=0){if(!fn||depth>=MAX_DEPTH)return false;return(fn.steps||[]).some(item=>isFunctionItem(item)&&(item.functionId===targetId||callsFunction(functionsById.get(item.functionId),targetId,functionsById,depth+1)));}/**
+ * Converts function items saved before the library existed (each holding its
+ * own copy of its lines and parameter values) into a definition plus a call.
+ *
+ * @param items recording items
+ * @param functions function definitions
+ * @returns {{items: Object[], functions: Object[]}}
+ */function migrateLegacyFunctions(items,functions){const library=(functions||[]).slice();const migrated=(items||[]).map(item=>{if(!isFunctionItem(item)||item.functionId||!Array.isArray(item.steps))return item;const args={};const parameters=(item.parameters||[]).map(({value,...parameter})=>{if(typeof value==='string')args[parameter.name]=value;return parameter;});library.push({id:item.id,name:item.name,description:item.description||'',parameters,steps:item.steps});return{type:'function',id:createId('call'),functionId:item.id,collapsed:!!item.collapsed,arguments:args};});return{items:migrated,functions:library};}// === Matching ===
+const escapeRegExp=text=>text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');/**
+ * Matches text against a template that may reference parameters.
+ *
+ * @param template the template, e.g. `label=$city`
+ * @param text the text to match, e.g. `label=Paris`
+ * @param names declared parameter names
+ * @returns {Object|null} the referenced parameters' values, e.g.
+ * `{city: 'Paris'}`, or null if the text does not fit the template
+ */function matchTemplate(template,text,names){const source=typeof text==='string'?text:'';const segments=parseParameterReferences(template,names);const refs=segments.filter(s=>s.ref).map(s=>s.ref);const pattern=segments.map(s=>s.ref?'([\\s\\S]*?)':escapeRegExp(s.literal)).join('');const match=new RegExp(`^${pattern}$`).exec(source);if(!match)return null;const bindings={};for(let i=0;i<refs.length;i++){const value=match[i+1];if(refs[i]in bindings&&bindings[refs[i]]!==value)return null;bindings[refs[i]]=value;}return bindings;}const locatorsOf=target=>{if(Array.isArray(target)){return target.map(entry=>Array.isArray(entry)?entry[0]:entry).filter(locator=>typeof locator==='string'&&locator);}return typeof target==='string'&&target?[target]:[];};// Positions and generated IDs change between runs of the same form
+const normalizeLocator=locator=>locator.replace(/\d+/g,'#');/**
+ * @returns {boolean} whether two recorded targets point at the same element:
+ * they share a locator, or one that only differs in its numbers
+ */function targetsSimilar(a,b){const first=locatorsOf(a);const second=locatorsOf(b);if(!first.length||!second.length)return first.length===second.length;if(first.some(locator=>second.includes(locator)))return true;const normalized=new Set(first.map(normalizeLocator));return second.some(locator=>normalized.has(normalizeLocator(locator)));}const mergeBindings=(into,from)=>{if(!from)return false;return Object.keys(from).every(name=>{if(name in into&&into[name]!==from[name])return false;into[name]=from[name];return true;});};/**
+ * Matches recording items against a function's steps. Lines match when they
+ * use the same command on a similar target and their value fits the step's
+ * value; calls match when they call the same function with fitting
+ * arguments.
+ *
+ * @param items recording items
+ * @param templates the function's steps (or their expanded lines)
+ * @param names the function's parameter names
+ * @returns {Object|null} the parameter values the items imply, or null
+ */function matchSequence(items,templates,names){if(!items.length||items.length!==templates.length)return null;const bindings={};for(let i=0;i<items.length;i++){const item=items[i];const template=templates[i];if(isFunctionItem(item)!==isFunctionItem(template))return null;if(isFunctionItem(item)){if(item.functionId!==template.functionId)return null;const args=item.arguments||{};const templateArgs=template.arguments||{};const ok=Object.keys(templateArgs).every(name=>mergeBindings(bindings,matchTemplate(templateArgs[name],args[name],names)));if(!ok)return null;}else{if(item.command!==template.command)return null;if(!targetsSimilar(item.target,template.target))return null;if(!mergeBindings(bindings,matchTemplate(template.value,item.value,names))){return null;}}}return bindings;}/**
+ * Matches items against a function, either step for step or against the
+ * lines its nested calls expand to.
+ *
+ * @returns {Object|null} the call's arguments, or null
+ */function matchFunction(items,fn,functionsById){const names=parameterNames(fn);const direct=matchSequence(items,fn.steps||[],names);if(direct)return direct;if(!(fn.steps||[]).some(isFunctionItem))return null;return matchSequence(items,expandItems(fn.steps,functionsById),names);}const lengthsToTry=(fn,functionsById)=>{const lengths=new Set([(fn.steps||[]).length]);if((fn.steps||[]).some(isFunctionItem)){lengths.add(expandItems(fn.steps,functionsById).length);}return Array.from(lengths).filter(length=>length>=2);};/**
+ * Finds the function the last recorded items are an instance of, preferring
+ * the match covering the most items.
+ *
+ * @param items recording items
+ * @param functions function definitions
+ * @returns {{functionId: string, start: number, end: number, arguments: Object}|null}
+ */function findTrailingMatch(items,functions){const byId=indexFunctions(functions);let best=null;(functions||[]).forEach(fn=>{lengthsToTry(fn,byId).forEach(length=>{if(length>items.length||best&&best.end-best.start+1>=length)return;const start=items.length-length;const args=matchFunction(items.slice(start),fn,byId);if(args)best={functionId:fn.id,start,end:items.length-1,arguments:args};});});return best;}/**
+ * Finds a function that the items in [start, end] are an instance of.
+ *
+ * @returns {{functionId: string, start: number, end: number, arguments: Object}|null}
+ */function findRangeMatch(items,start,end,functions){const byId=indexFunctions(functions);const range=items.slice(start,end+1);for(const fn of functions||[]){const args=matchFunction(range,fn,byId);if(args)return{functionId:fn.id,start,end,arguments:args};}return null;}/**
+ * Finds other places where a function's steps appear as top-level items.
+ *
+ * @param items recording items
+ * @param fn the function definition
+ * @param functions all function definitions
+ * @returns {Array<{start: number, end: number, arguments: Object}>} in order,
+ * not overlapping
+ */function findOccurrences(items,fn,functions){const byId=indexFunctions(functions);const found=[];const lengths=lengthsToTry(fn,byId);for(let start=0;start<items.length;start++){for(const length of lengths){if(start+length>items.length)continue;const args=matchFunction(items.slice(start,start+length),fn,byId);if(args){found.push({start,end:start+length-1,arguments:args});start+=length-1;break;}}}return found;}/**
+ * Finds a sequence of function calls that keeps appearing in the same order
+ * and is not already a function of its own, so it can be offered for
+ * wrapping into one function.
+ *
+ * @param items recording items
+ * @param functions function definitions
+ * @param isDismissed called with a sequence's signature
+ * @returns {{functionIds: string[], signature: string, count: number, start: number, end: number}|null}
+ * the longest such sequence (then the most frequent); start/end are its last
+ * occurrence
+ */function findRepeatedCalls(items,functions,isDismissed=()=>false){const wrapped=new Set((functions||[]).filter(fn=>fn.steps.length>0&&fn.steps.every(isFunctionItem)).map(fn=>fn.steps.map(step=>step.functionId).join('>')));const starts=new Map();let runStart=-1;for(let i=0;i<=items.length;i++){if(i<items.length&&isFunctionItem(items[i])){if(runStart<0)runStart=i;continue;}if(runStart>=0){for(let length=2;length<=i-runStart;length++){for(let s=runStart;s+length<=i;s++){const key=items.slice(s,s+length).map(item=>item.functionId).join('>');if(!starts.has(key))starts.set(key,[]);starts.get(key).push(s);}}}runStart=-1;}let best=null;starts.forEach((positions,key)=>{const length=key.split('>').length;const separate=[];positions.forEach(position=>{if(!separate.length||position>=separate[separate.length-1]+length){separate.push(position);}});const signature=`wrap:${key}`;if(separate.length<2||wrapped.has(key)||isDismissed(signature))return;const last=separate[separate.length-1];const better=!best||length>best.functionIds.length||length===best.functionIds.length&&separate.length>best.count||length===best.functionIds.length&&separate.length===best.count&&last>best.start;if(better){best={functionIds:key.split('>'),signature,count:separate.length,start:last,end:last+length-1};}});return best;}/**
+ * @returns {string} an identity for the items in [start, end], used to tell
+ * whether they have changed since a suggestion was made
+ */function fingerprintRange(items,start,end){return JSON.stringify(items.slice(start,end+1).map(item=>isFunctionItem(item)?['f',item.functionId,item.arguments||{}]:[item.command,item.target,item.value]));}
 
 /***/ },
 
@@ -6119,7 +6450,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony import */ var _recorder__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./recorder */ "./background/recorder.js");
 /* harmony import */ var _window_session__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./window-session */ "./background/window-session.js");
 /* harmony import */ var _select__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(/*! ./select */ "./background/select.js");
-/* harmony import */ var _common_ui_window__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ../common/ui-window */ "./common/ui-window.js");
+/* harmony import */ var _suggestion_engine__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(/*! ./suggestion-engine */ "./background/suggestion-engine.js");
+/* harmony import */ var _common_function_model__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(/*! ../common/function-model */ "./common/function-model.js");
+/* harmony import */ var _common_ui_window__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(/*! ../common/ui-window */ "./common/ui-window.js");
 // Licensed to the Software Freedom Conservancy (SFC) under one
 // or more contributor license agreements.  See the NOTICE file
 // distributed with this work for additional information
@@ -6136,15 +6469,17 @@ __webpack_require__.r(__webpack_exports__);
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-const STORAGE_KEY='tms:studioState';let socket=null;let socketListenersReady=false;const windowSession=new _window_session__WEBPACK_IMPORTED_MODULE_3__["default"]();const recordedSteps=[];let activeSessionId=null;let isRecording=false;let isPaused=false;let uiWindowId=null;function getSocket(){if(!socket){// WebSocket only: the default polling transport falls back to JSONP,
+const STORAGE_KEY='tms:studioState';let socket=null;let socketListenersReady=false;const windowSession=new _window_session__WEBPACK_IMPORTED_MODULE_3__["default"]();const recordedSteps=[];// The recording's function library (definitions that recorded items call)
+const functionLibrary=[];const suggestions=new _suggestion_engine__WEBPACK_IMPORTED_MODULE_5__["default"]();let activeSessionId=null;let isRecording=false;let isPaused=false;let uiWindowId=null;function getSocket(){if(!socket){// WebSocket only: the default polling transport falls back to JSONP,
 // which needs `document` and breaks in Chrome's MV3 service worker.
 socket=engine_io_client__WEBPACK_IMPORTED_MODULE_0___default()(globalThis.socketUrl||'ws://localhost:4445',{transports:['websocket']});}if(!socketListenersReady){socketListenersReady=true;socket.on('open',()=>{socket.on('message',data=>{const{type,payload}=JSON.parse(data);if(type==='attach'){attach(payload);}else if(type==='detach'){detach();}else if(type==='select'){selectElement(payload.sessionId,payload.windowName).then(result=>{return socket.send(JSON.stringify({type:'select',payload:{result}}));}).catch(error=>{return socket.send(JSON.stringify({type:'select',payload:{error:true,message:error.message}}));});}else if(type==='cancelSelect'){(0,_select__WEBPACK_IMPORTED_MODULE_4__.cancelSelect)();}});});}return socket;}// === State Persistence ===
-const snapshotState=()=>({recordedSteps:recordedSteps.slice(),activeSessionId,isPaused,isRecording,uiWindowId,hasRecorded:!!globalThis.hasRecorded,// Which windows/tabs belong to the recording; only meaningful until the
+const snapshotState=()=>({recordedSteps:recordedSteps.slice(),functions:functionLibrary.slice(),suggestions:suggestions.serialize(),activeSessionId,isPaused,isRecording,uiWindowId,hasRecorded:!!globalThis.hasRecorded,// Which windows/tabs belong to the recording; only meaningful until the
 // browser restarts, so only restored from session storage
 recorder:globalThis.recorder?globalThis.recorder.serialize():undefined,windowSession:windowSession.serialize()});// Session storage survives the background being unloaded when idle (Chrome's
 // service worker, Firefox's event page) but is cleared on browser restart.
 async function syncSessionState(){try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.session.set({[STORAGE_KEY]:snapshotState()});}catch(e){// best-effort
-}}// Local storage keeps a paused recording across browser restarts.
+}}// Local storage keeps the recording across browser restarts until it is
+// cleared with the Clear button (or a new recording starts).
 async function persistState(){try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.set({[STORAGE_KEY]:snapshotState()});}catch(e){// best-effort
 }await syncSessionState();}async function clearSavedState(){try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.remove(STORAGE_KEY);}catch(e){// best-effort
 }await syncSessionState();}/**
@@ -6153,30 +6488,41 @@ async function persistState(){try{await webextension_polyfill__WEBPACK_IMPORTED_
  * restarted since it was saved)
  */async function readSavedState(){try{const sessionResult=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.session.get(STORAGE_KEY);if(sessionResult[STORAGE_KEY]){return{saved:sessionResult[STORAGE_KEY],fromSession:true};}}catch(e){// fall through to local storage
 }const localResult=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.get(STORAGE_KEY);const saved=localResult[STORAGE_KEY];if(saved)await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.remove(STORAGE_KEY);return{saved,fromSession:false};}async function restoreState(){try{const{saved,fromSession}=await readSavedState();if(!saved||!Array.isArray(saved.recordedSteps))return;// Steps recorded while restore was in flight came after the saved ones
-recordedSteps.unshift(...saved.recordedSteps);activeSessionId=saved.activeSessionId||null;isPaused=saved.isPaused||false;isRecording=saved.isRecording||false;uiWindowId=saved.uiWindowId||null;if(fromSession){// The background was unloaded mid-session: reattach to the recording
+const migrated=(0,_common_function_model__WEBPACK_IMPORTED_MODULE_6__.migrateLegacyFunctions)(saved.recordedSteps,Array.isArray(saved.functions)?saved.functions:[]);recordedSteps.unshift(...migrated.items);functionLibrary.unshift(...migrated.functions);suggestions.restore(saved.suggestions);activeSessionId=saved.activeSessionId||null;isPaused=saved.isPaused||false;isRecording=saved.isRecording||false;uiWindowId=saved.uiWindowId||null;if(fromSession){// The background was unloaded mid-session: reattach to the recording
 globalThis.hasRecorded=!!saved.hasRecorded;windowSession.restore(saved.windowSession);globalThis.recorder.restore(saved.recorder);}await syncSessionState();notifyUiUpdate('restore');}catch(e){// best-effort
 }}// Restore any previously saved state on startup; message handlers wait on it
 const stateRestored=restoreState();const notifyUiUpdate=reason=>{webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.sendMessage({tmsStudioEvent:'updated',reason}).catch(()=>{});};const record=(command,target,value,insertBeforeLastCommand,context)=>{if(isPaused)return;globalThis.hasRecorded=true;const payload={type:'record',payload:{command,target,value,insertBeforeLastCommand}};// Field context is studio-only; the socket payload keeps its existing shape
-const sanitizedContext=sanitizeContext(context);recordedSteps.push(sanitizedContext?{...payload.payload,context:sanitizedContext}:payload.payload);syncSessionState();notifyUiUpdate('record');if(getSocket()&&getSocket().readyState==='open'){return getSocket().send(JSON.stringify(payload));}};const recordOpensWindow=windowHandleName=>{const payload={type:'recordOpensWindow',payload:{windowHandleName}};if(getSocket()&&getSocket().readyState==='open'){return getSocket().send(JSON.stringify(payload));}};const hasRecorded=()=>globalThis.hasRecorded;globalThis.recorder=new _recorder__WEBPACK_IMPORTED_MODULE_2__["default"](windowSession,record,recordOpensWindow,hasRecorded);globalThis.recorder.waitUntilRestored(stateRestored);const attach=({sessionId,hasRecorded:hasRecordedFlag=false})=>{globalThis.hasRecorded=hasRecordedFlag;activeSessionId=sessionId;isRecording=true;isPaused=false;notifyUiUpdate('attach');return globalThis.recorder.attach(sessionId).finally(syncSessionState);};const detach=()=>{isRecording=false;isPaused=false;activeSessionId=null;notifyUiUpdate('detach');return globalThis.recorder.detach().finally(syncSessionState);};const normalizeUrl=rawUrl=>{if(!rawUrl||!rawUrl.trim())return'about:blank';const trimmed=rawUrl.trim();if(/^https?:\/\//i.test(trimmed)||/^about:/i.test(trimmed)){return trimmed;}return`https://${trimmed}`;};const clearSiteData=async rawUrl=>{if(!(webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData)||typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData).remove!=='function'){return{ok:false,error:'browsingData API is unavailable.'};}const normalizedUrl=normalizeUrl(rawUrl);let hostname;let origin;try{const parsed=new URL(normalizedUrl);origin=parsed.origin;hostname=parsed.hostname;}catch(error){return{ok:false,error:`Invalid URL for clearing site data: ${rawUrl}`};}try{const dataToRemove={cookies:true,indexedDB:true,localStorage:true};const hostnameCandidates=new Set();const addHostname=value=>{if(!value||value==='localhost')return;hostnameCandidates.add(value);};addHostname(hostname);if(hostname.startsWith('www.')){addHostname(hostname.slice(4));}else{addHostname(`www.${hostname}`);}const parts=hostname.split('.').filter(Boolean);if(parts.length>=2){addHostname(parts.slice(-2).join('.'));}const originCandidates=new Set([origin]);hostnameCandidates.forEach(host=>{originCandidates.add(`https://${host}`);originCandidates.add(`http://${host}`);});try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0,hostnames:Array.from(hostnameCandidates)},dataToRemove);}catch(hostnamesError){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0,origins:Array.from(originCandidates)},dataToRemove);}if(typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData).removeCache==='function'){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.removeCache({since:0});}else{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0},{cache:true});}return{ok:true};}catch(error){return{ok:false,error:error&&error.message?error.message:String(error)};}};const waitForTabReady=tabId=>new Promise(resolve=>{let done=false;const timeout=setTimeout(()=>{if(done)return;done=true;webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.removeListener(listener);resolve();},5000);const listener=(updatedTabId,changeInfo)=>{if(updatedTabId!==tabId)return;if(changeInfo.status==='complete'){if(done)return;done=true;clearTimeout(timeout);webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.removeListener(listener);resolve();}};webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.addListener(listener);});const startRecording=async(url,sessionIdOverride,options={})=>{const sessionId=sessionIdOverride||`tms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;const startUrl=normalizeUrl(url);const startHostname=(()=>{try{return new URL(startUrl).hostname;}catch(e){return null;}})();if(options.clearSiteData===true){const preClearResult=await clearSiteData(startUrl);if(!preClearResult.ok){return preClearResult;}}const createOptions={url:startUrl,type:'normal',focused:true,state:'maximized'};const win=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.create(createOptions);const tabs=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.query({windowId:win.id,active:true});const tab=tabs[0];if(!tab){return{ok:false,error:'No active tab found in new window.'};}await waitForTabReady(tab.id);if(options.clearSiteData===true){const liveTab=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.get(tab.id);const finalUrl=liveTab&&liveTab.url?liveTab.url:startUrl;let finalHostname=null;try{finalHostname=new URL(finalUrl).hostname;}catch(e){finalHostname=null;}if(finalHostname&&finalHostname!==startHostname){const postClearResult=await clearSiteData(finalUrl);if(!postClearResult.ok){return postClearResult;}await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.reload(tab.id,{bypassCache:true});await waitForTabReady(tab.id);}}globalThis.hasRecorded=false;// Each recording starts fresh; functions are scoped to the current
+const sanitizedContext=sanitizeContext(context);recordedSteps.push(sanitizedContext?{...payload.payload,context:sanitizedContext}:payload.payload);suggestions.afterRecord(recordedSteps,functionLibrary);syncSessionState();notifyUiUpdate('record');if(getSocket()&&getSocket().readyState==='open'){return getSocket().send(JSON.stringify(payload));}};const recordOpensWindow=windowHandleName=>{const payload={type:'recordOpensWindow',payload:{windowHandleName}};if(getSocket()&&getSocket().readyState==='open'){return getSocket().send(JSON.stringify(payload));}};const hasRecorded=()=>globalThis.hasRecorded;globalThis.recorder=new _recorder__WEBPACK_IMPORTED_MODULE_2__["default"](windowSession,record,recordOpensWindow,hasRecorded);globalThis.recorder.waitUntilRestored(stateRestored);const attach=({sessionId,hasRecorded:hasRecordedFlag=false})=>{globalThis.hasRecorded=hasRecordedFlag;activeSessionId=sessionId;isRecording=true;isPaused=false;notifyUiUpdate('attach');return globalThis.recorder.attach(sessionId).finally(syncSessionState);};const detach=()=>{isRecording=false;isPaused=false;activeSessionId=null;notifyUiUpdate('detach');return globalThis.recorder.detach().finally(syncSessionState);};const normalizeUrl=rawUrl=>{if(!rawUrl||!rawUrl.trim())return'about:blank';const trimmed=rawUrl.trim();if(/^https?:\/\//i.test(trimmed)||/^about:/i.test(trimmed)){return trimmed;}return`https://${trimmed}`;};const clearSiteData=async rawUrl=>{if(!(webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData)||typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData).remove!=='function'){return{ok:false,error:'browsingData API is unavailable.'};}const normalizedUrl=normalizeUrl(rawUrl);let hostname;let origin;try{const parsed=new URL(normalizedUrl);origin=parsed.origin;hostname=parsed.hostname;}catch(error){return{ok:false,error:`Invalid URL for clearing site data: ${rawUrl}`};}try{const dataToRemove={cookies:true,indexedDB:true,localStorage:true};const hostnameCandidates=new Set();const addHostname=value=>{if(!value||value==='localhost')return;hostnameCandidates.add(value);};addHostname(hostname);if(hostname.startsWith('www.')){addHostname(hostname.slice(4));}else{addHostname(`www.${hostname}`);}const parts=hostname.split('.').filter(Boolean);if(parts.length>=2){addHostname(parts.slice(-2).join('.'));}const originCandidates=new Set([origin]);hostnameCandidates.forEach(host=>{originCandidates.add(`https://${host}`);originCandidates.add(`http://${host}`);});try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0,hostnames:Array.from(hostnameCandidates)},dataToRemove);}catch(hostnamesError){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0,origins:Array.from(originCandidates)},dataToRemove);}if(typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData).removeCache==='function'){await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.removeCache({since:0});}else{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().browsingData.remove({since:0},{cache:true});}return{ok:true};}catch(error){return{ok:false,error:error&&error.message?error.message:String(error)};}};const waitForTabReady=tabId=>new Promise(resolve=>{let done=false;const timeout=setTimeout(()=>{if(done)return;done=true;webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.removeListener(listener);resolve();},5000);const listener=(updatedTabId,changeInfo)=>{if(updatedTabId!==tabId)return;if(changeInfo.status==='complete'){if(done)return;done=true;clearTimeout(timeout);webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.removeListener(listener);resolve();}};webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.onUpdated.addListener(listener);});const startRecording=async(url,sessionIdOverride,options={})=>{const sessionId=sessionIdOverride||`tms-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;const startUrl=normalizeUrl(url);const startHostname=(()=>{try{return new URL(startUrl).hostname;}catch(e){return null;}})();if(options.clearSiteData===true){const preClearResult=await clearSiteData(startUrl);if(!preClearResult.ok){return preClearResult;}}const createOptions={url:startUrl,type:'normal',focused:true,state:'maximized'};const win=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.create(createOptions);const tabs=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.query({windowId:win.id,active:true});const tab=tabs[0];if(!tab){return{ok:false,error:'No active tab found in new window.'};}await waitForTabReady(tab.id);if(options.clearSiteData===true){const liveTab=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.get(tab.id);const finalUrl=liveTab&&liveTab.url?liveTab.url:startUrl;let finalHostname;try{finalHostname=new URL(finalUrl).hostname;}catch(e){finalHostname=null;}if(finalHostname&&finalHostname!==startHostname){const postClearResult=await clearSiteData(finalUrl);if(!postClearResult.ok){return postClearResult;}await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().tabs.reload(tab.id,{bypassCache:true});await waitForTabReady(tab.id);}}globalThis.hasRecorded=false;// Each recording starts fresh; functions are scoped to the current
 // recording until the WebUI provides a project function library
-recordedSteps.length=0;// attachWithTab is a no-op while still attached, which would leave the new
+resetRecording();// attachWithTab is a no-op while still attached, which would leave the new
 // window unregistered and its lines ignored
-if(globalThis.recorder.attached)await globalThis.recorder.detach();activeSessionId=sessionId;isRecording=true;isPaused=false;await globalThis.recorder.attachWithTab(sessionId,tab);record('open',[[startUrl]],'');return{ok:true,sessionId};};const pauseRecording=()=>{if(!isRecording){return{ok:false,error:'Cannot pause when recording is not active.'};}isPaused=true;persistState();notifyUiUpdate('pause');return{ok:true,isPaused};};const resumeRecording=()=>{if(!isRecording){return{ok:false,error:'Cannot resume when recording is not active.'};}isPaused=false;clearSavedState();notifyUiUpdate('resume');return{ok:true,isPaused};};const status=()=>({ok:true,isRecording,isPaused,sessionId:activeSessionId,count:recordedSteps.length});const steps=()=>({ok:true,steps:recordedSteps.slice()});const clear=()=>{recordedSteps.length=0;clearSavedState();notifyUiUpdate('clear');return{ok:true};};const CONTEXT_STRING_FIELDS=['fieldName','fieldType','autocomplete','label','step','groupKey','groupLabel'];/**
+if(globalThis.recorder.attached)await globalThis.recorder.detach();activeSessionId=sessionId;isRecording=true;isPaused=false;await globalThis.recorder.attachWithTab(sessionId,tab);record('open',[[startUrl]],'');return{ok:true,sessionId};};const pauseRecording=()=>{if(!isRecording){return{ok:false,error:'Cannot pause when recording is not active.'};}isPaused=true;persistState();notifyUiUpdate('pause');return{ok:true,isPaused};};const resumeRecording=()=>{if(!isRecording){return{ok:false,error:'Cannot resume when recording is not active.'};}isPaused=false;clearSavedState();notifyUiUpdate('resume');return{ok:true,isPaused};};const status=()=>({ok:true,isRecording,isPaused,sessionId:activeSessionId,count:recordedSteps.length});const steps=()=>({ok:true,steps:recordedSteps.slice(),functions:functionLibrary.slice(),suggestion:suggestions.suggestion});const resetRecording=()=>{recordedSteps.length=0;functionLibrary.length=0;suggestions.reset();};const clear=()=>{resetRecording();clearSavedState();notifyUiUpdate('clear');return{ok:true};};const CONTEXT_STRING_FIELDS=['fieldName','fieldType','autocomplete','label','step','groupKey','groupLabel','groupKind'];/**
  * Keeps only the known field-context properties recorded by the content
  * script (see content/form-context.js).
  *
  * @param context the context received with a recorded line
  * @returns {Object|undefined}
- */function sanitizeContext(context){if(!context||typeof context!=='object')return undefined;const sanitized={};CONTEXT_STRING_FIELDS.forEach(field=>{if(typeof context[field]==='string'&&context[field])sanitized[field]=context[field];});if(typeof context.isFillable==='boolean')sanitized.isFillable=context.isFillable;return Object.keys(sanitized).length?sanitized:undefined;}const sanitizeStep=step=>{if(!step||typeof step.command!=='string')return null;const sanitized={command:step.command,target:step.target,value:step.value,insertBeforeLastCommand:step.insertBeforeLastCommand};const context=sanitizeContext(step.context);if(context)sanitized.context=context;return sanitized;};const sanitizeParameter=parameter=>{if(!parameter||typeof parameter.name!=='string')return null;const sanitized={name:parameter.name};if(typeof parameter.type==='string'&&parameter.type)sanitized.type=parameter.type;if(typeof parameter.value==='string')sanitized.value=parameter.value;return sanitized;};/**
- * Normalizes a recorder item: either a plain step or a recorder-only function
- * group of the form { type: 'function', id, name, parameters, collapsed, steps }.
+ */function sanitizeContext(context){if(!context||typeof context!=='object')return undefined;const sanitized={};CONTEXT_STRING_FIELDS.forEach(field=>{if(typeof context[field]==='string'&&context[field])sanitized[field]=context[field];});if(typeof context.isFillable==='boolean')sanitized.isFillable=context.isFillable;return Object.keys(sanitized).length?sanitized:undefined;}const sanitizeStep=step=>{if(!step||typeof step.command!=='string')return null;const sanitized={command:step.command,target:step.target,value:step.value,insertBeforeLastCommand:step.insertBeforeLastCommand};const context=sanitizeContext(step.context);if(context)sanitized.context=context;return sanitized;};const sanitizeParameter=parameter=>{if(!parameter||typeof parameter.name!=='string')return null;const sanitized={name:parameter.name};if(typeof parameter.type==='string'&&parameter.type)sanitized.type=parameter.type;return sanitized;};const sanitizeArguments=args=>{const sanitized={};if(!args||typeof args!=='object')return sanitized;Object.keys(args).forEach(name=>{if(typeof args[name]==='string')sanitized[name]=args[name];});return sanitized;};/**
+ * Normalizes a recording item: either a recorded line or a call to a
+ * function in the library, { type: 'function', id, functionId, collapsed,
+ * arguments }.
  *
  * @param item the item received from the UI
  * @returns {Object|null} the sanitized item, or null if it is invalid
- */const sanitizeItem=item=>{if(!item||item.type!=='function')return sanitizeStep(item);if(typeof item.id!=='string'||typeof item.name!=='string')return null;const parameters=Array.isArray(item.parameters)?item.parameters:[];const steps=Array.isArray(item.steps)?item.steps:[];return{type:'function',id:item.id,name:item.name,parameters:parameters.map(sanitizeParameter).filter(Boolean),collapsed:!!item.collapsed,steps:steps.map(sanitizeStep).filter(Boolean)};};const replaceSteps=nextSteps=>{if(!Array.isArray(nextSteps)){return{ok:false,error:'Steps payload must be an array.'};}recordedSteps.length=0;nextSteps.forEach(item=>{const sanitized=sanitizeItem(item);if(sanitized)recordedSteps.push(sanitized);});persistState();notifyUiUpdate('replaceSteps');return{ok:true,steps:recordedSteps.slice()};};const openUiWindow=async()=>{if(uiWindowId){try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.update(uiWindowId,{focused:true});return;}catch(e){uiWindowId=null;}}// Reuse the last size the studio page saved, so the window opens at a size
+ */const sanitizeItem=item=>{if(!(0,_common_function_model__WEBPACK_IMPORTED_MODULE_6__.isFunctionItem)(item))return sanitizeStep(item);if(typeof item.id!=='string'||typeof item.functionId!=='string')return null;return{type:'function',id:item.id,functionId:item.functionId,collapsed:!!item.collapsed,arguments:sanitizeArguments(item.arguments)};};/**
+ * Normalizes a function definition: { id, name, description, parameters,
+ * steps }, whose steps may call other functions.
+ *
+ * @param fn the definition received from the UI
+ * @returns {Object|null}
+ */const sanitizeFunction=fn=>{if(!fn||typeof fn.id!=='string'||typeof fn.name!=='string')return null;return{id:fn.id,name:fn.name,description:typeof fn.description==='string'?fn.description:'',parameters:(Array.isArray(fn.parameters)?fn.parameters:[]).map(sanitizeParameter).filter(Boolean),steps:(Array.isArray(fn.steps)?fn.steps:[]).map(sanitizeItem).filter(Boolean)};};const replaceSteps=(nextSteps,nextFunctions)=>{if(!Array.isArray(nextSteps)){return{ok:false,error:'Steps payload must be an array.'};}// Older UIs send function groups that hold their own lines
+const migrated=(0,_common_function_model__WEBPACK_IMPORTED_MODULE_6__.migrateLegacyFunctions)(nextSteps,Array.isArray(nextFunctions)?nextFunctions:functionLibrary);const library=migrated.functions.map(sanitizeFunction).filter(Boolean);functionLibrary.length=0;functionLibrary.push(...library);recordedSteps.length=0;migrated.items.forEach(item=>{const sanitized=sanitizeItem(item);if(sanitized)recordedSteps.push(sanitized);});suggestions.afterReplace(recordedSteps,functionLibrary);persistState();notifyUiUpdate('replaceSteps');return{ok:true,...steps()};};const resolveSuggestion=(id,outcome)=>{if(suggestions.resolve(id,outcome)){syncSessionState();notifyUiUpdate('suggestion');}return{ok:true};};// === Form commits (TMD-11) ===
+// Lets the commit's own click/Enter line arrive before the run is examined
+const COMMIT_SETTLE_MS=300;const onFormCommit=(tabId,trigger,groupKey)=>{stateRestored.then(()=>{if(!isRecording||isPaused)return;if(!globalThis.recorder.doesTabBelongToRecording(tabId))return;setTimeout(()=>{if(!isRecording||isPaused)return;if(suggestions.afterCommit(recordedSteps,functionLibrary,{trigger,groupKey})){syncSessionState();notifyUiUpdate('suggestion');}},COMMIT_SETTLE_MS);});};// Registered synchronously so a navigation can wake the background
+webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.onMessage.addListener((message,sender)=>{if(!message||!message.formCommit||!sender||!sender.tab)return;onFormCommit(sender.tab.id,message.trigger,typeof message.groupKey==='string'?message.groupKey:undefined);});const onNavigation=details=>{if(details.frameId!==0||details.transitionType==='reload')return;onFormCommit(details.tabId,'navigation');};if((webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().webNavigation)){webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().webNavigation.onCommitted.addListener(onNavigation);webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().webNavigation.onHistoryStateUpdated.addListener(onNavigation);}const openUiWindow=async()=>{if(uiWindowId){try{await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.update(uiWindowId,{focused:true});return;}catch(e){uiWindowId=null;}}// Reuse the last size the studio page saved, so the window opens at a size
 // that already fits instead of visibly resizing after it loads
-let saved;try{saved=(await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.get(_common_ui_window__WEBPACK_IMPORTED_MODULE_5__.UI_WINDOW_SIZE_KEY))[_common_ui_window__WEBPACK_IMPORTED_MODULE_5__.UI_WINDOW_SIZE_KEY];}catch(e){// fall back to the default size
-}const win=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.create({url:webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.getURL('ui.html'),type:'popup',...(0,_common_ui_window__WEBPACK_IMPORTED_MODULE_5__.windowSizeToOpen)(saved)});uiWindowId=win.id;syncSessionState();};if((webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows).onRemoved&&typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows).onRemoved.addListener==='function'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.onRemoved.addListener(windowId=>{if(windowId===uiWindowId){uiWindowId=null;syncSessionState();}});}webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().action.onClicked.addListener(()=>{openUiWindow();});const selectElement=async(sessionId,windowName)=>{let tab;Object.keys(windowSession.openedTabIds[sessionId]).forEach(tabId=>{if(windowSession.openedTabIds[sessionId][tabId]===windowName){tab=tabId;}});if(!tab){throw new Error(`'${windowName}' does not exists in session '${sessionId}'`);}return await (0,_select__WEBPACK_IMPORTED_MODULE_4__.select)(parseInt(tab));};webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.onMessage.addListener(message=>{if(!message||!message.tmsStudio)return;return stateRestored.then(()=>handleStudioMessage(message));});const handleStudioMessage=message=>{if(message.tmsStudio==='start'){return startRecording(message.url,message.sessionId,{clearSiteData:message.clearSiteData===true}).catch(err=>({ok:false,error:err&&err.message?err.message:String(err)}));}if(message.tmsStudio==='stop'){return detach().then(()=>({ok:true})).catch(err=>({ok:false,error:err&&err.message?err.message:String(err)}));}if(message.tmsStudio==='pause'){return Promise.resolve(pauseRecording());}if(message.tmsStudio==='resume'){return Promise.resolve(resumeRecording());}if(message.tmsStudio==='status'){return Promise.resolve(status());}if(message.tmsStudio==='steps'){return Promise.resolve(steps());}if(message.tmsStudio==='clear'){return Promise.resolve(clear());}if(message.tmsStudio==='replaceSteps'){return Promise.resolve(replaceSteps(message.steps));}if(message.tmsStudio==='clearSiteData'){return clearSiteData(message.url);}};globalThis.tmsApi={start:startRecording,stop:()=>detach().then(()=>({ok:true})),pause:pauseRecording,resume:resumeRecording,status,steps,clear,clearSiteData,replaceSteps};
+let saved;try{saved=(await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().storage.local.get(_common_ui_window__WEBPACK_IMPORTED_MODULE_7__.UI_WINDOW_SIZE_KEY))[_common_ui_window__WEBPACK_IMPORTED_MODULE_7__.UI_WINDOW_SIZE_KEY];}catch(e){// fall back to the default size
+}const win=await webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.create({url:webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.getURL('ui.html'),type:'popup',...(0,_common_ui_window__WEBPACK_IMPORTED_MODULE_7__.windowSizeToOpen)(saved)});uiWindowId=win.id;syncSessionState();};if((webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows).onRemoved&&typeof (webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows).onRemoved.addListener==='function'){webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().windows.onRemoved.addListener(windowId=>{if(windowId===uiWindowId){uiWindowId=null;syncSessionState();}});}webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().action.onClicked.addListener(()=>{openUiWindow();});const selectElement=async(sessionId,windowName)=>{let tab;Object.keys(windowSession.openedTabIds[sessionId]).forEach(tabId=>{if(windowSession.openedTabIds[sessionId][tabId]===windowName){tab=tabId;}});if(!tab){throw new Error(`'${windowName}' does not exists in session '${sessionId}'`);}return await (0,_select__WEBPACK_IMPORTED_MODULE_4__.select)(parseInt(tab));};webextension_polyfill__WEBPACK_IMPORTED_MODULE_1___default().runtime.onMessage.addListener(message=>{if(!message||!message.tmsStudio)return;return stateRestored.then(()=>handleStudioMessage(message));});const handleStudioMessage=message=>{if(message.tmsStudio==='start'){return startRecording(message.url,message.sessionId,{clearSiteData:message.clearSiteData===true}).catch(err=>({ok:false,error:err&&err.message?err.message:String(err)}));}if(message.tmsStudio==='stop'){return detach().then(()=>({ok:true})).catch(err=>({ok:false,error:err&&err.message?err.message:String(err)}));}if(message.tmsStudio==='pause'){return Promise.resolve(pauseRecording());}if(message.tmsStudio==='resume'){return Promise.resolve(resumeRecording());}if(message.tmsStudio==='status'){return Promise.resolve(status());}if(message.tmsStudio==='steps'){return Promise.resolve(steps());}if(message.tmsStudio==='clear'){return Promise.resolve(clear());}if(message.tmsStudio==='replaceSteps'){return Promise.resolve(replaceSteps(message.steps,message.functions));}if(message.tmsStudio==='resolveSuggestion'){return Promise.resolve(resolveSuggestion(message.id,message.outcome));}if(message.tmsStudio==='clearSiteData'){return clearSiteData(message.url);}};globalThis.tmsApi={start:startRecording,stop:()=>detach().then(()=>({ok:true})),pause:pauseRecording,resume:resumeRecording,status,steps,clear,clearSiteData,replaceSteps,resolveSuggestion};
 })();
 
 /******/ 	return __webpack_exports__;

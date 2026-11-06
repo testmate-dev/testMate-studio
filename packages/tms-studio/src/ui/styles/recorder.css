@@ -284,10 +284,73 @@ button:disabled {
   outline-color: var(--color-stop);
 }
 
-/* Indent past the checkbox and toggle so children read as nested */
+/* Indent past the checkbox and toggle so children read as nested; nested
+   calls add their own indent inline */
 .function-child {
   padding-left: 64px;
   color: #444;
+}
+
+.function-child-call {
+  color: var(--color-function);
+  font-weight: 600;
+}
+
+/* Lines a suggestion is about, and its tooltip under the last of them */
+.step-item.suggested {
+  background: var(--bg-color-function-soft);
+}
+
+.suggestion-tip {
+  position: relative;
+  margin: 8px 6px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color-function);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+}
+
+/* Arrow pointing at the line above */
+.suggestion-tip::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: 20px;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border-left: 1px solid var(--border-color-function);
+  border-top: 1px solid var(--border-color-function);
+  transform: rotate(45deg);
+}
+
+.suggestion-text {
+  color: #1f1f1f;
+}
+
+.suggestion-detail {
+  margin-top: 2px;
+  color: #777;
+}
+
+.suggestion-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.suggestion-actions button {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.function-description {
+  resize: vertical;
+  font: inherit;
+  margin-bottom: 4px;
 }
 
 .step-select {
@@ -524,7 +587,12 @@ select.modal-input {
 
 .function-errors {
   margin: 10px 0 0;
-  padding-left: 18px;
+  padding-left: 0;
+  list-style-type: none;
   font-size: 12px;
   color: var(--color-stop);
+}
+
+.function-description-label {
+  margin-top: 10px;
 }

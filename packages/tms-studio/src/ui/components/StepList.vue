@@ -9,6 +9,7 @@
         'function-block': isFunctionItem(item),
         collapsed: isFunctionItem(item) && item.collapsed,
         selected: selectedStepIds.has(item._uiId),
+        suggested: isSuggested(index),
         dragging: draggingStepId === item._uiId,
         'paste-target': isPasteMode,
       }"
@@ -67,10 +68,10 @@
               class="function-signature"
               title="Double-click to rename"
               @dblclick="startRename(item)"
-              >{{ index + 1 }}. {{ formatSignature(item) }}</span
+              >{{ index + 1 }}. {{ callSignature(item) }}</span
             >
             <span class="function-count"
-              >{{ item.steps.length }} line{{ item.steps.length === 1 ? '' : 's' }}</span
+              >{{ lineCount(item) }} line{{ lineCount(item) === 1 ? '' : 's' }}</span
             >
           </div>
           <div class="step-controls">
@@ -115,17 +116,53 @@
       </div>
 
       <template v-if="isFunctionItem(item) && !item.collapsed">
-        <div v-for="(child, childIndex) in item.steps" :key="child._uiId" class="step function-child">
-          <div class="step-text">{{ stepText(child, `${index + 1}.${childIndex + 1}`) }}</div>
+        <div
+          v-for="row in callRows(item, `${index + 1}`)"
+          :key="row.key"
+          class="step function-child"
+          :class="{ 'function-child-call': row.isCall }"
+          :style="{ paddingLeft: `${64 + row.depth * 16}px` }"
+        >
+          <div class="step-text">{{ row.text }}</div>
         </div>
       </template>
+
+      <div
+        v-if="suggestion && suggestion.end === index"
+        class="suggestion-tip"
+        role="status"
+      >
+        <div class="suggestion-text">{{ suggestionText }}</div>
+        <div v-if="suggestion.kind === 'form' && suggestion.groupLabel" class="suggestion-detail">
+          {{ suggestion.groupLabel }}
+        </div>
+        <div class="suggestion-actions">
+          <template v-if="suggestion.kind === 'match'">
+            <button class="primary" type="button" @click="$emit('accept-suggestion', 'use')">
+              Use {{ functionName(suggestion.functionId) }}
+            </button>
+            <button type="button" @click="$emit('accept-suggestion', 'create')">Add as new</button>
+          </template>
+          <button
+            v-else
+            class="primary"
+            type="button"
+            @click="$emit('accept-suggestion', 'create')"
+          >
+            {{ suggestion.kind === 'wrap' ? 'Wrap in function' : 'Create function' }}
+          </button>
+          <button type="button" @click="$emit('dismiss-suggestion')">Dismiss</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { formatSignature, isFunctionItem, isValidIdentifier } from '../utils/function-utils'
+
+const MAX_NESTING = 20
 
 export default {
   emits: [
@@ -136,6 +173,8 @@ export default {
     'toggle-collapse',
     'edit-function',
     'rename-function',
+    'accept-suggestion',
+    'dismiss-suggestion',
   ],
   props: {
     steps: { type: Array, required: true },
@@ -145,16 +184,80 @@ export default {
     draggingStepId: { type: String, default: null },
     icons: { type: Object, required: true },
     stepText: { type: Function, required: true },
+    // the recording's function library
+    functions: { type: Array, default: () => [] },
+    // the current "make this a function" suggestion, if any
+    suggestion: { type: Object, default: null },
   },
-  setup(_props, { emit }) {
+  setup(props, { emit }) {
+    const functionsById = computed(() => new Map(props.functions.map(fn => [fn.id, fn])))
+
+    const definitionOf = call => functionsById.value.get(call.functionId)
+
+    const callSignature = call => {
+      const fn = definitionOf(call)
+      return fn ? formatSignature(fn, call.arguments || {}) : 'Missing function'
+    }
+
+    const lineCount = call => {
+      const fn = definitionOf(call)
+      return fn ? fn.steps.length : 0
+    }
+
+    const functionName = functionId => {
+      const fn = functionsById.value.get(functionId)
+      return fn ? fn.name : 'function'
+    }
+
+    // The lines under a call, including the lines of functions it calls,
+    // numbered N.x, N.x.y, …
+    const callRows = (call, label, depth = 0) => {
+      const fn = definitionOf(call)
+      if (!fn || depth >= MAX_NESTING) return []
+      const rows = []
+      fn.steps.forEach((step, index) => {
+        const childLabel = `${label}.${index + 1}`
+        const key = `${call._uiId || call.id}:${childLabel}`
+        if (!isFunctionItem(step)) {
+          rows.push({ key, depth, text: props.stepText(step, childLabel) })
+          return
+        }
+        rows.push({ key, depth, isCall: true, text: `${childLabel}. ${callSignature(step)}` })
+        rows.push(...callRows({ ...step, _uiId: key }, childLabel, depth + 1))
+      })
+      return rows
+    }
+
+    const isSuggested = index =>
+      !!props.suggestion && index >= props.suggestion.start && index <= props.suggestion.end
+
+    const suggestionText = computed(() => {
+      const current = props.suggestion
+      if (!current) return ''
+      const range =
+        current.start === current.end
+          ? `Line ${current.start + 1}`
+          : `Lines ${current.start + 1}–${current.end + 1}`
+      if (current.kind === 'match') {
+        return `${range} repeat ${functionName(current.functionId)}. Use it here?`
+      }
+      if (current.kind === 'wrap') {
+        const names = current.functionIds.map(functionName).join(' → ')
+        return `${names} appear together ${current.count} times. Wrap them in one function?`
+      }
+      return `${range} look like a form. Turn them into a function?`
+    })
+
     const renamingId = ref(null)
     const renameValue = ref('')
     const renameInvalid = ref(false)
     const renameInput = ref(null)
 
     const startRename = async item => {
+      const fn = definitionOf(item)
+      if (!fn) return
       renamingId.value = item._uiId
-      renameValue.value = item.name
+      renameValue.value = fn.name
       renameInvalid.value = false
       await nextTick()
       // ref inside v-for resolves to an array
@@ -203,7 +306,12 @@ export default {
       commitRename,
       onRenameBlur,
       isFunctionItem,
-      formatSignature,
+      callSignature,
+      lineCount,
+      functionName,
+      callRows,
+      isSuggested,
+      suggestionText,
     }
   },
 }

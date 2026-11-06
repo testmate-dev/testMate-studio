@@ -13,6 +13,11 @@ export function useRecorderApi() {
         // Strip Vue reactive proxies: Firefox structured-clones messages and
         // throws DataCloneError on Proxy objects (Chrome JSON-serializes).
         message.steps = JSON.parse(JSON.stringify(args[0]))
+        message.functions = JSON.parse(JSON.stringify(args[1] || []))
+      }
+      if (method === 'resolveSuggestion') {
+        message.id = args[0]
+        message.outcome = args[1]
       }
 
       const response = await api.runtime.sendMessage(message)

@@ -21,6 +21,15 @@
         @keydown.enter.prevent="save"
       />
 
+      <label class="modal-label function-description-label" for="function-description">Description</label>
+      <textarea
+        id="function-description"
+        v-model="description"
+        class="modal-input function-description"
+        rows="2"
+        placeholder="What this function does (optional)"
+      ></textarea>
+
       <div class="function-params-header">
         <span class="modal-label">Parameters</span>
         <button class="function-param-add" type="button" @click="addParameter">
@@ -69,6 +78,8 @@
         parameter to keep that line's value fixed.
       </div>
 
+      <div v-if="note" class="function-params-note">{{ note }}</div>
+
       <ul v-if="errors.length" class="function-errors">
         <li v-for="error in errors" :key="error">{{ error }}</li>
       </ul>
@@ -93,12 +104,18 @@ export default {
     show: { type: Boolean, required: true },
     mode: { type: String, default: 'create' },
     initialName: { type: String, default: '' },
+    initialDescription: { type: String, default: '' },
     initialParameters: { type: Array, default: () => [] },
+    // shown above the buttons, e.g. that an edit applies to every use
+    note: { type: String, default: '' },
+    // optional extra check of a valid draft; returns error messages
+    validate: { type: Function, default: null },
     icons: { type: Object, required: true },
   },
   setup(props, { emit }) {
     const nameInput = ref(null)
     const name = ref('')
+    const description = ref('')
     const parameters = ref([])
     const errors = ref([])
     let parameterKey = 0
@@ -133,10 +150,14 @@ export default {
     const save = () => {
       const result = validateFunctionDraft({
         name: name.value,
+        description: description.value,
         parameters: parameters.value,
       })
-      errors.value = result.errors
-      if (result.errors.length === 0) emit('save', result.value)
+      errors.value =
+        result.errors.length === 0 && props.validate
+          ? props.validate(result.value)
+          : result.errors
+      if (errors.value.length === 0) emit('save', result.value)
     }
 
     watch(
@@ -144,6 +165,7 @@ export default {
       async nextValue => {
         if (!nextValue) return
         name.value = props.initialName
+        description.value = props.initialDescription
         parameters.value = props.initialParameters.map(toDraftParameter)
         errors.value = []
         await nextTick()
@@ -157,6 +179,7 @@ export default {
     return {
       nameInput,
       name,
+      description,
       parameters,
       errors,
       typeOptions,

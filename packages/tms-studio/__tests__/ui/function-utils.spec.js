@@ -17,6 +17,7 @@
 
 import {
   applyParameterEdits,
+  editFunctionDefinition,
   createFunctionId,
   escapeParameterReferences,
   formatSignature,
@@ -308,6 +309,74 @@ describe('function utils', () => {
           ],
         }).value.parameters
       ).toEqual([{ name: 'user', link }, { name: 'pw', originalName: 'password' }])
+    })
+  })
+
+  describe('nested calls', () => {
+    const login = { id: 'fn-login', name: 'login', parameters: [{ name: 'user', type: 'string' }], steps: [] }
+    const byId = new Map([[login.id, login]])
+    const loginCall = { type: 'function', id: 'c1', functionId: 'fn-login', arguments: { user: 'bob' } }
+
+    it('suggests a parameter for each argument of a nested call', () => {
+      expect(suggestParameters([loginCall, { command: 'click', target: 'x', value: '' }], byId)).toEqual([
+        { stepIndex: 0, argument: 'user', name: 'user', type: 'string', value: 'bob', prefix: '' },
+      ])
+    })
+
+    it('links nested call arguments to the new parameters', () => {
+      const linked = linkParameters(
+        [loginCall],
+        [{ name: 'who', link: { stepIndex: 0, argument: 'user', prefix: '', value: 'bob' } }]
+      )
+      expect(linked.steps[0].arguments).toEqual({ user: '$who' })
+      expect(linked.parameters).toEqual([{ name: 'who', value: 'bob' }])
+    })
+  })
+
+  describe('editFunctionDefinition', () => {
+    const fn = {
+      id: 'fn-a',
+      name: 'search',
+      description: '',
+      parameters: [{ name: 'q' }, { name: 'page' }],
+      steps: [
+        { command: 'type', target: 'a', value: '$q' },
+        { command: 'type', target: 'b', value: '$page' },
+      ],
+    }
+    const use = (id, args) => ({ type: 'function', id, functionId: 'fn-a', arguments: args })
+
+    it('renames parameters in the definition and every call', () => {
+      const result = editFunctionDefinition(
+        { items: [use('1', { q: 'x', page: '1' }), use('2', { q: 'y', page: '1' })], functions: [fn], copied: [] },
+        'fn-a',
+        { name: 'find', description: 'Finds', parameters: [{ name: 'query', originalName: 'q' }, { name: 'page', originalName: 'page' }] }
+      )
+      expect(result.functions[0]).toMatchObject({ name: 'find', description: 'Finds' })
+      expect(result.functions[0].steps[0].value).toBe('$query')
+      expect(result.items.map(item => item.arguments)).toEqual([
+        { query: 'x', page: '1' },
+        { query: 'y', page: '1' },
+      ])
+    })
+
+    it('inlines a removed parameter all uses agree on', () => {
+      const result = editFunctionDefinition(
+        { items: [use('1', { q: 'x', page: '1' }), use('2', { q: 'y', page: '1' })], functions: [fn], copied: [] },
+        'fn-a',
+        { name: 'search', parameters: [{ name: 'q', originalName: 'q' }] }
+      )
+      expect(result.functions[0].steps[1].value).toBe('1')
+      expect(result.items[0].arguments).toEqual({ q: 'x' })
+    })
+
+    it('refuses to remove a parameter uses disagree on', () => {
+      const result = editFunctionDefinition(
+        { items: [use('1', { q: 'x', page: '1' }), use('2', { q: 'y', page: '1' })], functions: [fn], copied: [] },
+        'fn-a',
+        { name: 'search', parameters: [{ name: 'page', originalName: 'page' }] }
+      )
+      expect(result.error).toMatch(/different values/)
     })
   })
 })
